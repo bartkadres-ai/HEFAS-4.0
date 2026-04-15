@@ -10,69 +10,56 @@
 #define HEFAS_CONFIG_H
 
 // ========================== PINY SPRZĘTOWE ==========================
-// Magistrala I2C – czujnik inercyjny MPU6050
 #define PIN_SDA                5      // D4 (GPIO 5) – linia danych I2C
 #define PIN_SCL                6      // D5 (GPIO 6) – linia zegara I2C
-
-// Czujnik optyczny TCRT5000 + komparator LM393 (Active LOW)
-#define PIN_LM393              1      // D0 (GPIO 1) – wejście cyfrowe
+#define PIN_LM393              1      // D0 (GPIO 1) – wejście czujnika (Active LOW)
 #define LM393_AKTYWNY_STAN     LOW    // Stan aktywny czujnika (impuls)
 
-// Dioda wbudowana na płytce XIAO ESP32-S3 Plus
-#ifndef LED_BUILTIN
-  #define LED_BUILTIN          21
-#endif
+// LED_BUILTIN jest zdefiniowany przez board XIAO ESP32-S3 (GPIO 21).
 
 // =================== PARAMETRY CZUŁOŚCI I FILTRACJI =================
-// Współczynnik skalowania prędkości kątowej na piksele ruchu kursora.
-// Większa wartość = szybszy kursor. Zalecany zakres: 0.2 – 1.0
-#define CZULOSC_MYSZY          0.4f
-
-// Strefa martwa (dead zone) – minimalna prędkość kątowa [°/s],
-// poniżej której ruch kursora jest zerowany. Zapobiega dryfowi.
-#define STREFA_MARTWA          2.0f
-
-// Próg szumu żyroskopu [°/s] – wartości poniżej traktowane jako szum
-// czujnika i zerowane przed dalszym przetwarzaniem.
-#define PROG_ZYROSKOPU         1.5f
-
-// Liczba próbek uśrednianych podczas autokalibracji żyroskopu.
-// Więcej próbek = dokładniejsza kalibracja, ale dłuższy czas startu.
-#define PROBKI_KALIBRACJI      200
-
-// Czułość żyroskopu MPU6050 [LSB/(°/s)] dla zakresu ±250°/s
-#define CZULOSC_ZYRO_LSB       131.0f
+#define CZULOSC_MYSZY          0.4f   // Skalowanie ruchu (0.2–1.0)
+#define STREFA_MARTWA          2.0f   // Dead zone [°/s]
+#define PROG_ZYROSKOPU         1.5f   // Próg szumu żyroskopu [°/s]
+#define PROBKI_KALIBRACJI      200    // Próbki kalibracji
+#define CZULOSC_ZYRO_LSB       131.0f // LSB/(°/s) dla ±250°/s
 
 // =================== PARAMETRY DETEKCJI KLIKNIĘĆ ====================
-// Czas eliminacji drgań styków (debounce) [ms]
-#define CZAS_DEBOUNCE_MS       50
+#define CZAS_DEBOUNCE_MS       50     // Eliminacja drgań [ms]
+#define OKNO_WIELOKLIKU_MS     400    // Max odstęp między impulsami [ms]
+#define CZAS_KROTKIEGO_KLIKU_MS 30    // Czas press/release [ms]
+#define CZAS_BLYSKU_LED_MS     60     // Błysk diody przy kliknięciu [ms]
 
-// Maksymalny odstęp między dwoma impulsami [ms], aby rozpoznać
-// podwójne kliknięcie (prawy przycisk myszy)
-#define OKNO_DWUKLIKU_MS       400
+// ================= PRZYTRZYMANIE (DRAG & DROP) ======================
+// Jeśli czujnik jest aktywny nieprzerwanie dłużej niż ten próg,
+// system wciska i trzyma lewy przycisk myszy (drag). Po zwolnieniu
+// czujnika przycisk zostaje puszczony (drop).
+#define PROG_PRZYTRZYMANIA_MS  600
 
-// Czas trwania impulsu press/release przy kliknięciu [ms]
-#define CZAS_KROTKIEGO_KLIKU_MS  30
-
-// Czas błysku wbudowanej diody LED przy kliknięciu [ms]
-#define CZAS_BLYSKU_LED_MS     60
+// ========================= TRYB SCROLLA =============================
+// 3 szybkie mrugnięcia → wejście w tryb scrolla (dioda świeci ciągle).
+// 2 szybkie mrugnięcia → wyjście z trybu scrolla.
+// W trybie scrolla ruch głowy góra/dół steruje kółkiem myszy.
+#define DZIELNIK_SCROLLA       4      // Skalowanie prędkości scrolla
 
 // ========================= KIERUNKI OSI =============================
-// Mnożniki pozwalające odwrócić kierunek ruchu kursora bez
-// przebudowy kodu. Ustaw na -1 lub +1 w zależności od orientacji
-// montażu MPU6050 na głowie użytkownika.
 #define ODWROC_OS_X            (1)
-#define ODWROC_OS_Y            (-1)
+#define ODWROC_OS_Y            (1)
 
 // ========================= DIAGNOSTYKA ==============================
 #define PREDKOSC_SERIAL        115200
 #define TRYB_DEBUG             true
-
-// Interwał wypisywania danych diagnostycznych ruchu [ms]
 #define OKRES_DIAGNOSTYKI_MS   500
 
+// ===================== WEB DEBUG (WiFi AP) ===========================
+// Wlacz/wylacz modul diagnostyczny WiFi. Gdy true, ESP32 stawia
+// wlasna siec WiFi i serwuje strone z logami na 192.168.4.1.
+// Gdy false – modul sie nie kompiluje, zero wplywu na reszte kodu.
+#define WEBDEBUG_AKTYWNY       true
+#define WEBDEBUG_SSID          "HEFAS-Debug"
+#define WEBDEBUG_HASLO         "hefas1234"
+
 // ===================== PARAMETRY PĘTLI GŁÓWNEJ ======================
-// Okres jednej iteracji pętli loop() [ms]. 10 ms ≈ 100 Hz.
-#define OKRES_PETLI_MS         10
+#define OKRES_PETLI_MS         10     // ~100 Hz
 
 #endif // HEFAS_CONFIG_H
