@@ -31,9 +31,6 @@
 
 #include "hefas_config.h"
 
-/* Funkcja TinyUSB sprawdzająca, czy host USB zakończył enumerację
-   urządzenia. Zwraca true, gdy kabel USB jest podpięty do komputera
-   i system operacyjny rozpoznał urządzenie HID. */
 extern "C" bool tud_mounted(void);
 
 // ======================== OBIEKTY GLOBALNE ==========================
@@ -63,10 +60,11 @@ bool           ostatniStabilnyOdczyt   = HIGH;
 unsigned long  czasOstatniegoDebounce  = 0;
 unsigned long  czasPierwszegoImpulsu   = 0;
 
-// ============= ZMIENNE WYJŚCIA POMOCNICZEGO ========================
+// =============== NIBLOKUJĄCY BŁYSK DIODY WBUDOWANEJ ================
+// Wzorzec z poprzedniego projektu: dioda świeci się przez
+// CZAS_BLYSKU_LED_MS po każdym kliknięciu, gaszona w pętli głównej.
 
-bool          wyjscieAktywne          = false;
-unsigned long czasAktywacjiWyjscia    = 0;
+unsigned long koniecBlyskuLedMs = 0;
 
 // =================== ZMIENNE DIAGNOSTYKI ============================
 
@@ -75,8 +73,25 @@ unsigned long ostatniCzasDiagnostyki  = 0;
 // ===================== FUNKCJE POMOCNICZE ===========================
 
 /**
- * Sygnalizacja wizualna diodą wbudowaną na płytce XIAO.
- * Używana do informowania o stanie systemu (gotowość, błąd).
+ * Ustawia czas zakończenia błysku wbudowanej diody.
+ * Niblokujące – dioda jest gaszona w odswiezLed().
+ */
+void ustawBlyskLed(uint32_t czasMs) {
+    koniecBlyskuLedMs = millis() + czasMs;
+}
+
+/**
+ * Odświeża stan wbudowanej diody LED. Jeśli czas błysku jeszcze
+ * nie upłynął – dioda świeci. Po upłynięciu – gaśnie.
+ * Wywoływana co iterację pętli głównej.
+ */
+void odswiezLed() {
+    digitalWrite(LED_BUILTIN, (millis() < koniecBlyskuLedMs) ? HIGH : LOW);
+}
+
+/**
+ * Sygnalizacja wizualna diodą wbudowaną (blokująca).
+ * Używana TYLKO przy starcie systemu (kalibracja, gotowość).
  */
 void mrugnijDioda(int ileMrugniecie, int czasMs) {
     for (int i = 0; i < ileMrugniecie; i++) {
@@ -87,10 +102,6 @@ void mrugnijDioda(int ileMrugniecie, int czasMs) {
     }
 }
 
-/**
- * Zwraca true, gdy urządzenie jest połączone kablem USB z hostem
- * (komputer rozpoznał je jako urządzenie HID).
- */
 bool czyUSBPodlaczone() {
     return tud_mounted();
 }
@@ -100,10 +111,9 @@ bool czyUSBPodlaczone() {
 /**
  * Autokalibracja żyroskopu MPU6050.
  *
- * Algorytm: pobiera PROBKI_KALIBRACJI odczytów żyroskopu przy
- * nieruchomym czujniku, uśrednia je i zapamiętuje jako offsety.
- * Każdy kolejny odczyt w pętli głównej jest pomniejszany o te
- * offsety, co eliminuje stały błąd systematyczny (bias) czujnika.
+ * Pobiera PROBKI_KALIBRACJI odczytów przy nieruchomym czujniku,
+ * uśrednia je i zapamiętuje jako offsety. Każdy kolejny odczyt
+ * jest pomniejszany o te offsety, co eliminuje bias czujnika.
  *
  * WAŻNE: Podczas kalibracji urządzenie MUSI leżeć nieruchomo!
  */
@@ -142,15 +152,14 @@ void kalibracjaZyroskopu() {
 
 /**
  * Odczytuje surowe dane z żyroskopu, odejmuje offsety kalibracyjne,
- * przelicza na stopnie na sekundę (°/s), a następnie stosuje
- * podwójną filtrację:
+ * przelicza na °/s, a następnie stosuje podwójną filtrację:
  *
- *   1) PROG_ZYROSKOPU – zeruje szum czujnika poniżej progu [°/s]
- *   2) STREFA_MARTWA  – zeruje mikroruchy poniżej minimum [°/s]
+ *   1) PROG_ZYROSKOPU – zeruje szum czujnika poniżej progu
+ *   2) STREFA_MARTWA  – zeruje mikroruchy poniżej minimum
  *
- * Mapowanie osi (montaż czujnika na czole, chipem do przodu):
- *   Yaw   (obrót głowy lewo/prawo) → oś Z żyroskopu → oś X myszy
- *   Pitch (kiwnięcie głowy góra/dół) → oś X żyroskopu → oś Y myszy
+ * Mapowanie osi (ustalono empirycznie dla montażu na czole):
+ *   oś X żyroskopu (gx) → oś X kursora (Yaw – lewo/prawo)
+ *   oś Z żyroskopu (gz) → oś Y kursora (Pitch – góra/dół)
  *
  * Mnożniki ODWROC_OS_X / ODWROC_OS_Y w hefas_config.h pozwalają
  * odwrócić kierunek bez przebudowy kodu (ustaw na +1 lub -1).
@@ -159,17 +168,17 @@ void odczytajIMU() {
     int16_t ax, ay, az, gx, gy, gz;
     czujnikIMU.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 
-    float predkoscYaw   = ((float)gz - offsetGz) / CZULOSC_ZYRO_LSB;
-    float predkoscPitch = ((float)gx - offsetGx) / CZULOSC_ZYRO_LSB;
+    float predkoscOsX = ((float)gx - offsetGx) / CZULOSC_ZYRO_LSB;
+    float predkoscOsZ = ((float)gz - offsetGz) / CZULOSC_ZYRO_LSB;
 
-    if (fabs(predkoscYaw)   < PROG_ZYROSKOPU) predkoscYaw   = 0.0f;
-    if (fabs(predkoscPitch) < PROG_ZYROSKOPU) predkoscPitch = 0.0f;
+    if (fabs(predkoscOsX) < PROG_ZYROSKOPU) predkoscOsX = 0.0f;
+    if (fabs(predkoscOsZ) < PROG_ZYROSKOPU) predkoscOsZ = 0.0f;
 
-    if (fabs(predkoscYaw)   < STREFA_MARTWA) predkoscYaw   = 0.0f;
-    if (fabs(predkoscPitch) < STREFA_MARTWA) predkoscPitch = 0.0f;
+    if (fabs(predkoscOsX) < STREFA_MARTWA) predkoscOsX = 0.0f;
+    if (fabs(predkoscOsZ) < STREFA_MARTWA) predkoscOsZ = 0.0f;
 
-    float dX = predkoscYaw   * CZULOSC_MYSZY * ODWROC_OS_X;
-    float dY = predkoscPitch * CZULOSC_MYSZY * ODWROC_OS_Y;
+    float dX = predkoscOsX * CZULOSC_MYSZY * ODWROC_OS_X;
+    float dY = predkoscOsZ * CZULOSC_MYSZY * ODWROC_OS_Y;
 
     kursorDeltaX = constrain((int)dX, -127, 127);
     kursorDeltaY = constrain((int)dY, -127, 127);
@@ -179,9 +188,8 @@ void odczytajIMU() {
 
 /**
  * Wysyła wektor ruchu kursora przez kanał o wyższym priorytecie.
- * USB HID ma pierwszeństwo – jeśli kabel USB jest podłączony do
- * hosta, dane lecą natywnym HID. W przeciwnym razie (praca na
- * baterii) system korzysta z Bluetooth Low Energy.
+ * USB HID ma pierwszeństwo – jeśli kabel jest podłączony do hosta,
+ * dane lecą natywnym HID. W przeciwnym razie – Bluetooth LE.
  */
 void wyslijRuchMyszy(int dx, int dy) {
     if (czyUSBPodlaczone()) {
@@ -192,32 +200,28 @@ void wyslijRuchMyszy(int dx, int dy) {
 }
 
 /**
- * Wysyła kliknięcie przycisku myszy i aktywuje wyjście pomocnicze
- * (krótki impuls na PIN_WYJSCIE do sterowania przekaźnikiem/LED).
+ * Wysyła kliknięcie przycisku myszy wzorcem press → delay → release,
+ * co daje bardziej niezawodną detekcję po stronie systemu operacyjnego
+ * niż pojedyncze click(). Jednocześnie wyzwala krótki błysk
+ * wbudowanej diody LED jako informację zwrotną dla użytkownika.
  */
 void wyslijKlikniecie(uint8_t przycisk) {
     if (czyUSBPodlaczone()) {
-        usbMysz.click(przycisk);
+        usbMysz.press(przycisk);
+        delay(CZAS_KROTKIEGO_KLIKU_MS);
+        usbMysz.release(przycisk);
     } else if (bleMysz.isConnected()) {
-        bleMysz.click(przycisk);
+        bleMysz.press(przycisk);
+        delay(CZAS_KROTKIEGO_KLIKU_MS);
+        bleMysz.release(przycisk);
     }
 
-    digitalWrite(PIN_WYJSCIE, HIGH);
-    wyjscieAktywne       = true;
-    czasAktywacjiWyjscia = millis();
-}
+    ustawBlyskLed(CZAS_BLYSKU_LED_MS);
 
-// ================ OBSŁUGA WYJŚCIA POMOCNICZEGO ====================
-
-/**
- * Niblokujące wyłączanie wyjścia pomocniczego po upływie
- * CZAS_IMPULSU_WYJSCIA ms od aktywacji kliknięcia.
- */
-void obsluzWyjsciePomocnicze() {
-    if (wyjscieAktywne &&
-        (millis() - czasAktywacjiWyjscia) >= CZAS_IMPULSU_WYJSCIA) {
-        digitalWrite(PIN_WYJSCIE, LOW);
-        wyjscieAktywne = false;
+    if (TRYB_DEBUG) {
+        Serial.print(F("[KLIK] >>> "));
+        Serial.print(przycisk == MOUSE_LEFT ? F("LEWY") : F("PRAWY"));
+        Serial.println(F(" KLIK <<<"));
     }
 }
 
@@ -235,9 +239,9 @@ void obsluzWyjsciePomocnicze() {
  *   1. Wykrycie stabilnego zbocza opadającego (HIGH → LOW)
  *      po odczekaniu CZAS_DEBOUNCE_MS (eliminacja szumów).
  *   2. Jeśli w ciągu OKNO_DWUKLIKU_MS pojawi się drugi impuls
- *      → rozpoznanie jako PRAWY KLIK (MOUSE_RIGHT).
+ *      → PRAWY KLIK (MOUSE_RIGHT).
  *   3. Jeśli okno minie bez drugiego impulsu
- *      → rozpoznanie jako LEWY KLIK (MOUSE_LEFT).
+ *      → LEWY KLIK (MOUSE_LEFT).
  */
 void obsluzKlikniecia() {
     bool odczytCzujnika = digitalRead(PIN_LM393);
@@ -252,21 +256,22 @@ void obsluzKlikniecia() {
         return;
     }
 
-    bool zboczeOpadajace = (ostatniStabilnyOdczyt == HIGH &&
-                            odczytCzujnika == LOW);
+    bool impulsAktywny = (odczytCzujnika == LM393_AKTYWNY_STAN);
+    bool poprzednioAktywny = (ostatniStabilnyOdczyt == LM393_AKTYWNY_STAN);
+    bool zboczeNarastajace = (impulsAktywny && !poprzednioAktywny);
+
     ostatniStabilnyOdczyt = odczytCzujnika;
 
-    if (zboczeOpadajace) {
+    if (zboczeNarastajace) {
         switch (stanKlikniecia) {
             case BEZCZYNNY:
                 stanKlikniecia        = OCZEKIWANIE_NA_DWUKLIK;
                 czasPierwszegoImpulsu = teraz;
-                if (TRYB_DEBUG) Serial.println(F("[KLIK] Impuls #1 wykryty"));
+                if (TRYB_DEBUG) Serial.println(F("[KLIK] Impuls #1"));
                 break;
 
             case OCZEKIWANIE_NA_DWUKLIK:
                 if ((teraz - czasPierwszegoImpulsu) <= OKNO_DWUKLIKU_MS) {
-                    if (TRYB_DEBUG) Serial.println(F("[KLIK] >>> PRAWY KLIK <<<"));
                     wyslijKlikniecie(MOUSE_RIGHT);
                     stanKlikniecia = BEZCZYNNY;
                 } else {
@@ -278,7 +283,6 @@ void obsluzKlikniecia() {
 
     if (stanKlikniecia == OCZEKIWANIE_NA_DWUKLIK &&
         (teraz - czasPierwszegoImpulsu) > OKNO_DWUKLIKU_MS) {
-        if (TRYB_DEBUG) Serial.println(F("[KLIK] >>> LEWY KLIK <<<"));
         wyslijKlikniecie(MOUSE_LEFT);
         stanKlikniecia = BEZCZYNNY;
     }
@@ -286,11 +290,6 @@ void obsluzKlikniecia() {
 
 // ======================== DIAGNOSTYKA ==============================
 
-/**
- * Cykliczne wypisywanie danych telemetrycznych na Serial Monitor.
- * Ograniczone do jednego wydruku na OKRES_DIAGNOSTYKI_MS, aby
- * nie zalewać terminala przy 100 Hz pętli głównej.
- */
 void diagnostyka() {
     if (!TRYB_DEBUG) return;
 
@@ -315,9 +314,8 @@ void setup() {
     Serial.begin(PREDKOSC_SERIAL);
 
     pinMode(PIN_LM393,   INPUT_PULLUP);
-    pinMode(PIN_WYJSCIE, OUTPUT);
     pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(PIN_WYJSCIE, LOW);
+    digitalWrite(LED_BUILTIN, LOW);
 
     if (TRYB_DEBUG) {
         Serial.println();
@@ -326,10 +324,8 @@ void setup() {
         Serial.println(F("============================================"));
     }
 
-    // --- Magistrala I2C na dedykowanych pinach ---
     Wire.begin(PIN_SDA, PIN_SCL);
 
-    // --- Czujnik inercyjny MPU6050 ---
     czujnikIMU.initialize();
 
     if (!czujnikIMU.testConnection()) {
@@ -344,19 +340,15 @@ void setup() {
     }
     if (TRYB_DEBUG) Serial.println(F("[OK] MPU6050 polaczony."));
 
-    // --- Autokalibracja żyroskopu ---
     kalibracjaZyroskopu();
 
-    // --- USB HID Mouse ---
     usbMysz.begin();
     USB.begin();
     if (TRYB_DEBUG) Serial.println(F("[OK] USB HID Mouse zarejestrowany."));
 
-    // --- Bluetooth LE Mouse ---
     bleMysz.begin();
-    if (TRYB_DEBUG) Serial.println(F("[OK] BLE Mouse – ogłaszanie aktywne."));
+    if (TRYB_DEBUG) Serial.println(F("[OK] BLE Mouse – oglaszanie aktywne."));
 
-    // --- Sygnalizacja gotowości ---
     mrugnijDioda(3, 200);
 
     if (TRYB_DEBUG) {
@@ -377,7 +369,7 @@ void loop() {
         wyslijRuchMyszy(kursorDeltaX, kursorDeltaY);
     }
 
-    obsluzWyjsciePomocnicze();
+    odswiezLed();
 
     diagnostyka();
 
@@ -397,7 +389,7 @@ void loop() {
  *
  *  include/hefas_config.h
  *    Centralne repozytorium stałych konfiguracyjnych:
- *    piny I2C/LM393/wyjścia, czułość myszy, progi filtracji,
+ *    piny I2C/LM393, czułość myszy, progi filtracji,
  *    parametry debounce/dwukliku, kierunki osi, flaga DEBUG.
  *    Jedyne miejsce, które trzeba edytować przy strojeniu.
  *
@@ -405,8 +397,10 @@ void loop() {
  *    Pełna logika systemu HEFAS:
  *    - autokalibracja żyroskopu (200 próbek, ~1 s),
  *    - odczyt i podwójna filtracja danych IMU,
- *    - mapowanie Yaw→X, Pitch→Y z konfigurowalną czułością,
+ *    - mapowanie gx→X, gz→Y (empiryczne, pod montaż na czole),
  *    - maszyna stanów kliknięć (1 impuls = lewy, 2 = prawy),
+ *    - press/release zamiast click (niezawodniejsze),
+ *    - wbudowana dioda LED miga przy każdym kliknięciu,
  *    - dualna komunikacja USB HID / BLE z priorytetem USB,
  *    - diagnostyka przez Serial Monitor 115200 baud.
  *
@@ -414,15 +408,14 @@ void loop() {
  *
  *  1. Podłącz MPU6050:  SDA → D4 (GPIO 5), SCL → D5 (GPIO 6).
  *  2. Podłącz LM393:   OUT → D0 (GPIO 1), zasilanie 3.3 V.
- *  3. (Opcja) przekaźnik/LED → D2 (GPIO 3).
- *  4. Wgraj firmware:   PlatformIO → Upload (Ctrl+Alt+U).
- *  5. Po starcie nie ruszaj głową przez ~1 s (kalibracja).
- *  6. Dioda mrugnij 3× = system gotowy.
- *  7. Rusz głową – kursor powinien się poruszać.
- *  8. Mrugnij raz → lewy klik, dwa razy szybko → prawy klik.
- *  9. Jeśli kierunek jest odwrócony, zmień ODWROC_OS_X / _Y
+ *  3. Wgraj firmware:   PlatformIO → Upload (Ctrl+Alt+U).
+ *  4. Po starcie nie ruszaj głową przez ~1 s (kalibracja).
+ *  5. Dioda mrugnij 3× = system gotowy.
+ *  6. Rusz głową – kursor powinien się poruszać.
+ *  7. Mrugnij raz → lewy klik, dwa razy szybko → prawy klik.
+ *  8. Jeśli kierunek jest odwrócony, zmień ODWROC_OS_X / _Y
  *     w hefas_config.h na +1 lub -1.
- * 10. Jeśli kursor drży, zwiększ STREFA_MARTWA lub PROG_ZYROSKOPU.
+ *  9. Jeśli kursor drży, zwiększ STREFA_MARTWA lub PROG_ZYROSKOPU.
  *
  * ============================================================
  */

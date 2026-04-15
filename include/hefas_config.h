@@ -16,11 +16,9 @@
 
 // Czujnik optyczny TCRT5000 + komparator LM393 (Active LOW)
 #define PIN_LM393              1      // D0 (GPIO 1) – wejście cyfrowe
+#define LM393_AKTYWNY_STAN     LOW    // Stan aktywny czujnika (impuls)
 
-// Wyjście pomocnicze (przekaźnik lub dioda sygnalizacyjna kliknięcia)
-#define PIN_WYJSCIE            3      // D2 (GPIO 3)
-
-// Dioda wbudowana na płytce XIAO ESP32-S3
+// Dioda wbudowana na płytce XIAO ESP32-S3 Plus
 #ifndef LED_BUILTIN
   #define LED_BUILTIN          21
 #endif
@@ -53,14 +51,17 @@
 // podwójne kliknięcie (prawy przycisk myszy)
 #define OKNO_DWUKLIKU_MS       400
 
-// Czas impulsu wyjścia pomocniczego przy kliknięciu [ms]
-#define CZAS_IMPULSU_WYJSCIA   80
+// Czas trwania impulsu press/release przy kliknięciu [ms]
+#define CZAS_KROTKIEGO_KLIKU_MS  30
+
+// Czas błysku wbudowanej diody LED przy kliknięciu [ms]
+#define CZAS_BLYSKU_LED_MS     60
 
 // ========================= KIERUNKI OSI =============================
 // Mnożniki pozwalające odwrócić kierunek ruchu kursora bez
-// przebudowy kodu. Ustaw na -1, jeśli kursor jedzie w złą stronę.
-// Zależne od fizycznej orientacji montażu MPU6050 na głowie.
-#define ODWROC_OS_X            (-1)
+// przebudowy kodu. Ustaw na -1 lub +1 w zależności od orientacji
+// montażu MPU6050 na głowie użytkownika.
+#define ODWROC_OS_X            (1)
 #define ODWROC_OS_Y            (-1)
 
 // ========================= DIAGNOSTYKA ==============================
