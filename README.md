@@ -1,4 +1,4 @@
-# HEFAS 3 – sterowanie myszka ruchem glowy
+# HEFAS 4.0 – sterowanie myszka ruchem glowy
 
 System bezdotykowej obslugi kursora myszy ruchami glowy dla osob z niepelnosprawnosciami.
 **HEFAS** = Head-controlled Electronic Functional Assistive System.
@@ -31,7 +31,7 @@ Czujnik LM393 zasilany z 3.3 V. Wyjscie A0 (analogowe) nie jest uzywane.
 ## Struktura projektu
 
 ```
-Hefas 3/
+HEFAS 4.0/
 ├── platformio.ini              Konfiguracja PlatformIO (board, flagi USB, biblioteki)
 ├── include/
 │   ├── hefas_config.h          Wszystkie stale konfiguracyjne (piny, czulosc, progi)
@@ -107,5 +107,5 @@ Alternatywnie, podlacz Serial Monitor (115200 baud). System wypisuje:
 
 ## Autorzy
 
-Sebastian Sobczyk, Bartlomiej Adamczyk
+Bartlomiej Adamczyk, Sebastian Sobczyk,
 Mechatronika – Szczecin 2026

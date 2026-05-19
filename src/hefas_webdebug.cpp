@@ -59,7 +59,7 @@ h1{color:var(--ac);font-size:1.15em}
 @media(max-width:560px){.grid{grid-template-columns:1fr}}
 .pn{background:var(--pn);border:1px solid var(--bd);border-radius:8px;padding:12px}
 .mv{display:flex;flex-direction:column;align-items:center;gap:8px}
-.mv svg{width:90px}
+.mv svg{width:80px}
 .cnt{font-size:.78em;text-align:center;line-height:1.9}
 .cnt b{color:var(--ac)}
 .cnt .vl{font-size:1.1em}
@@ -86,14 +86,13 @@ h1{color:var(--ac);font-size:1.15em}
 </div></div>
 <div class="grid">
 <div class="pn mv">
-<svg viewBox="0 0 120 170">
-<ellipse cx="60" cy="105" rx="44" ry="62" fill="#2a2a4e" stroke="#555" stroke-width="1.5"/>
-<path d="M16,80 C16,35 60,18 60,18 L60,80 Z" id="ml" fill="#2a2a4e" stroke="#555" stroke-width="1.5"/>
-<path d="M104,80 C104,35 60,18 60,18 L60,80 Z" id="mr" fill="#2a2a4e" stroke="#555" stroke-width="1.5"/>
-<rect x="52" y="48" width="16" height="26" rx="8" id="mw" fill="#3a3a5e" stroke="#555"/>
-<line x1="60" y1="18" x2="60" y2="80" stroke="#555" stroke-width="1.5"/>
-<polygon points="60,35 54,44 66,44" id="su" fill="none" stroke="#555" stroke-width="1"/>
-<polygon points="60,67 54,58 66,58" id="sdn" fill="none" stroke="#555" stroke-width="1"/>
+<svg viewBox="0 0 80 120">
+<rect x="5" y="42" width="70" height="72" rx="35" fill="#2a2a4e" stroke="#555" stroke-width="1.5"/>
+<path d="M5,52 Q5,8 40,5 Q75,8 75,52 Z" fill="#2a2a4e" stroke="#555" stroke-width="1.5"/>
+<path d="M5,52 Q5,8 40,5 L40,52 Z" id="ml" fill="#333355" stroke="#555" stroke-width="1"/>
+<path d="M75,52 Q75,8 40,5 L40,52 Z" id="mr" fill="#333355" stroke="#555" stroke-width="1"/>
+<line x1="40" y1="5" x2="40" y2="52" stroke="#555" stroke-width="1"/>
+<rect x="34" y="20" width="12" height="22" rx="6" id="mw" fill="#444" stroke="#666" stroke-width="1"/>
 </svg>
 <canvas class="jc" id="joy" width="80" height="80"></canvas>
 <div class="cnt">
@@ -106,12 +105,15 @@ dX:<b id="vx">0</b> dY:<b id="vy">0</b>
 </div></div>
 <div id="lg"></div>
 <div class="br">
-<button class="bp" id="bp" onclick="fetch('/pauza')">PAUZA</button>
-<button class="bk" onclick="fetch('/rekalibracja')">REKALIBRACJA</button>
+<button class="bp" id="bp" onclick="fetch('/pauza',{cache:'no-store'}).catch(function(){})">PAUZA</button>
+<button class="bk" onclick="fetch('/rekalibracja',{cache:'no-store'}).catch(function(){})">REKALIBRACJA</button>
 <button class="bc" onclick="document.getElementById('lg').innerHTML=''">WYCZYSC</button>
 </div>
 <script>
 var MH=200,hx=[],hy=[],li=0,plc=0,prc=0,lg=document.getElementById('lg');
+var IDLE_BTN='#333355',DRAG_L='#e94560';
+var lastSnap=null,mlTok=null,mrTok=null,pollGen=0,POLL_MS=160;
+
 function sC(){var c=document.getElementById('ch');c.width=c.parentElement.clientWidth-26;c.height=200}
 window.addEventListener('resize',sC);sC();
 
@@ -137,13 +139,29 @@ var s=1.5,px=cx+Math.max(-32,Math.min(32,dx*s)),py=cy+Math.max(-32,Math.min(32,d
 x.fillStyle='#00d4ff';x.shadowColor='#00d4ff';x.shadowBlur=8;x.beginPath();x.arc(px,py,5,0,Math.PI*2);x.fill();
 x.shadowBlur=0}
 
-function fl(id,col){var e=document.getElementById(id);e.setAttribute('fill',col);
-setTimeout(function(){e.setAttribute('fill','#2a2a4e')},350)}
+function syncMouseSvg(r){
+var ml=document.getElementById('ml'),mr=document.getElementById('mr');
+if(r.d){ml.setAttribute('fill',DRAG_L);}
+else if(!mlTok){ml.setAttribute('fill',IDLE_BTN);}
+if(!mrTok){mr.setAttribute('fill',IDLE_BTN);}
+}
+
+function flashMl(){if(lastSnap&&lastSnap.d)return;
+clearTimeout(mlTok);var ml=document.getElementById('ml');ml.setAttribute('fill','#e94560');
+mlTok=setTimeout(function(){mlTok=null;syncMouseSvg(lastSnap||{});},280);}
+
+function flashMr(){clearTimeout(mrTok);var mr=document.getElementById('mr');mr.setAttribute('fill','#00d4ff');
+mrTok=setTimeout(function(){mrTok=null;syncMouseSvg(lastSnap||{});},280);}
 
 function sd(id,on){document.getElementById(id).className='dot'+(on?' on':'')}
 
-async function po(){try{
-var r=await(await fetch('/logi?od='+li)).json();
+async function pollLoop(){
+var gen=++pollGen;
+try{
+var r=await(await fetch('/logi?od='+li,{cache:'no-store'})).json();
+if(gen!==pollGen)return;
+lastSnap=r;
+var plc0=plc,prc0=prc;
 r.l.forEach(function(t){var d=document.createElement('div');d.textContent=t;lg.appendChild(d)});
 if(r.l.length)lg.scrollTop=lg.scrollHeight;
 li=r.i;
@@ -153,19 +171,24 @@ document.getElementById('vy').textContent=r.dy;
 document.getElementById('cl').textContent=r.lc;
 document.getElementById('cr').textContent=r.rc;
 sd('du',r.u);sd('ds',r.s);sd('dd',r.d);sd('dp',r.p);
-if(r.lc>plc)fl('ml','#e94560');if(r.rc>prc)fl('mr','#00d4ff');
 plc=r.lc;prc=r.rc;
+syncMouseSvg(r);
+if(r.lc>plc0)flashMl();
+if(r.rc>prc0)flashMr();
 document.getElementById('mw').setAttribute('fill',r.s?'#4ecca3':'#3a3a5e');
-if(r.d)document.getElementById('ml').setAttribute('fill','#e94560');
 var b=document.getElementById('bp');b.textContent=r.p?'WZNOW':'PAUZA';b.className='bp'+(r.p?' on':'');
-dCh();dJ(r.dx,r.dy)}catch(e){}}
-setInterval(po,300);
+dCh();dJ(r.dx,r.dy);
+}catch(e){}
+finally{if(gen===pollGen)setTimeout(pollLoop,POLL_MS);}
+}
+pollLoop();
 </script></body></html>
 )rawliteral";
 
 // ====================== HANDLERY HTTP ==============================
 
 static void obsluzStrone() {
+    serwer.sendHeader("Cache-Control", "no-store");
     serwer.send(200, "text/html", STRONA_HTML);
 }
 
@@ -205,16 +228,19 @@ static void obsluzLogi() {
     json += ",\"p\":";    json += webPauzaMyszy ? "true" : "false";
     json += '}';
 
+    serwer.sendHeader("Cache-Control", "no-store");
     serwer.send(200, "application/json", json);
 }
 
 static void obsluzPauze() {
     webPauzaMyszy = !webPauzaMyszy;
+    serwer.sendHeader("Cache-Control", "no-store");
     serwer.send(200, "text/plain", webPauzaMyszy ? "PAUZA" : "AKTYWNA");
 }
 
 static void obsluzRekalibracje() {
     webZadanieRekalibracji = true;
+    serwer.sendHeader("Cache-Control", "no-store");
     serwer.send(200, "text/plain", "OK");
 }
 

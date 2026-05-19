@@ -30,7 +30,7 @@ extern "C" bool tud_mounted(void);
 // ======================== OBIEKTY GLOBALNE ==========================
 
 MPU6050            czujnikIMU;                              // Czujnik inercyjny 6-DoF (I2C)
-BleMouse           bleMysz("HEFAS", "HEFAS Team", 100);    // Mysz BLE (nazwa, producent, bateria%)
+BleMouse           bleMysz("HEFAS 4.0", "HEFAS Team", 100); // Mysz BLE (nazwa, producent, bateria%)
 USBHIDMouse        usbMysz;                                // Mysz USB HID (natywny USB ESP32-S3)
 
 // ===================== ZMIENNE KALIBRACJI ===========================
@@ -94,6 +94,12 @@ unsigned long  koniecBlyskuLedMs       = 0;
 
 unsigned long  ostatniCzasDiagnostyki  = 0;
 
+// Globalna flaga runtime sterująca wypisywaniem logów na Serial.
+// Domyślnie WYŁĄCZONA, aby nie obciążać CPU/USB-CDC w normalnej pracy
+// (mniejsze zużycie energii, mniejsze nagrzewanie układu).
+// Przełączana sekwencją 6 mrugnięć (patrz przetworzImpulsy).
+bool czyDebugWlaczony = false;
+
 // ===================== FUNKCJE POMOCNICZE ===========================
 
 // Ustawia czas trwania blysku diody wbudowanej [ms].
@@ -133,7 +139,7 @@ bool czyUSBPodlaczone() {
 // =================== KALIBRACJA ŻYROSKOPU ==========================
 
 void kalibracjaZyroskopu() {
-    if (TRYB_DEBUG) {
+    if (czyDebugWlaczony) {
         Serial.println(F("[KALIBRACJA] Nie ruszaj glowa..."));
     }
 
@@ -152,7 +158,7 @@ void kalibracjaZyroskopu() {
     offsetGy = (float)sumaGy / PROBKI_KALIBRACJI;
     offsetGz = (float)sumaGz / PROBKI_KALIBRACJI;
 
-    if (TRYB_DEBUG) {
+    if (czyDebugWlaczony) {
         Serial.print(F("[KALIBRACJA] Gx="));
         Serial.print(offsetGx, 1);
         Serial.print(F("  Gy="));
@@ -224,6 +230,33 @@ void wyslijKlikniecie(uint8_t przycisk) {
 }
 
 /**
+ * Podwójne kliknięcie lewym przyciskiem (double-click LPM).
+ * Realizowane jako dwa szybkie press/release z odstępem
+ * CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS, mieszczącym się w domyślnym
+ * progu double-click systemu Windows (500 ms).
+ */
+void wyslijPodwojnyKlikLewy() {
+    if (czyUSBPodlaczone()) {
+        usbMysz.press(MOUSE_LEFT);
+        delay(CZAS_KROTKIEGO_KLIKU_MS);
+        usbMysz.release(MOUSE_LEFT);
+        delay(CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS);
+        usbMysz.press(MOUSE_LEFT);
+        delay(CZAS_KROTKIEGO_KLIKU_MS);
+        usbMysz.release(MOUSE_LEFT);
+    } else if (bleMysz.isConnected()) {
+        bleMysz.press(MOUSE_LEFT);
+        delay(CZAS_KROTKIEGO_KLIKU_MS);
+        bleMysz.release(MOUSE_LEFT);
+        delay(CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS);
+        bleMysz.press(MOUSE_LEFT);
+        delay(CZAS_KROTKIEGO_KLIKU_MS);
+        bleMysz.release(MOUSE_LEFT);
+    }
+    ustawBlyskLed(CZAS_BLYSKU_LED_MS);
+}
+
+/**
  * Obsługa przytrzymania lewego przycisku (drag & drop).
  * wcisnij=true  → press,  dioda świeci ciągle.
  * wcisnij=false → release, dioda gaśnie.
@@ -232,13 +265,13 @@ void wyslijPrzytrzymanie(bool wcisnij) {
     if (wcisnij) {
         if (czyUSBPodlaczone())         usbMysz.press(MOUSE_LEFT);
         else if (bleMysz.isConnected()) bleMysz.press(MOUSE_LEFT);
-        if (TRYB_DEBUG) Serial.println(F("[DRAG] Przytrzymanie ON"));
+        if (czyDebugWlaczony) Serial.println(F("[DRAG] Przytrzymanie ON"));
         webDebugLog("[DRAG] Przytrzymanie ON");
     } else {
         if (czyUSBPodlaczone())         usbMysz.release(MOUSE_LEFT);
         else if (bleMysz.isConnected()) bleMysz.release(MOUSE_LEFT);
         ustawBlyskLed(CZAS_BLYSKU_LED_MS);
-        if (TRYB_DEBUG) Serial.println(F("[DRAG] Przytrzymanie OFF"));
+        if (czyDebugWlaczony) Serial.println(F("[DRAG] Przytrzymanie OFF"));
         webDebugLog("[DRAG] Przytrzymanie OFF");
     }
 }
@@ -248,47 +281,67 @@ void wyslijPrzytrzymanie(bool wcisnij) {
 /**
  * Wywoływana po upływie okna wielokliku, gdy czujnik jest nieaktywny.
  *
- *   Tryb normalny:
- *     1 impuls  → lewy klik
- *     2 impulsy → prawy klik
- *     3 impulsy → WEJŚCIE w tryb scrolla (dioda ON)
- *     4+ impulsy → rekalibracja żyroskopu
+ * Mapowanie mrugnięć na akcje (HEFAS 4.0):
+ *   1 mrug.  → lewy klik (LPM)
+ *   2 mrug.  → podwójny lewy klik (double-click LPM, otwieranie plików)
+ *   3 mrug.  → prawy klik (PPM)
+ *   4 mrug.  → toggle trybu scrolla (LED ciągły gdy aktywny)
+ *   5 mrug.  → rekalibracja żyroskopu (LED mruga 3×)
+ *   6 mrug.  → toggle trybu debug (LED mruga 2×)
  *
- *   Tryb scrolla:
- *     2 impulsy → WYJŚCIE z trybu scrolla (dioda OFF)
- *     inne → ignorowane (brak kliknięć w trybie scrolla)
+ * Akcje 4–6 (sterowanie systemem) działają zawsze, niezależnie od stanu.
+ * Akcje 1–3 (kliknięcia myszą) są zablokowane w trybie scrolla, aby
+ * niezamierzone mrugnięcia nie generowały klików podczas scrollowania.
  */
 void przetworzImpulsy(uint8_t licznik) {
-    if (trybScrolla) {
-        if (licznik >= 2) {
-            trybScrolla = false;
-            ustawBlyskLed(CZAS_BLYSKU_LED_MS);
-            if (TRYB_DEBUG) Serial.println(F("[SCROLL] OFF"));
-            webDebugLog("[SCROLL] OFF");
-        }
+    // --- 6 mrugnięć: przełączenie trybu debug (zawsze dostępne) ---
+    if (licznik >= 6) {
+        czyDebugWlaczony = !czyDebugWlaczony;
+        if (czyDebugWlaczony) Serial.println(F("[DEBUG] WLACZONY"));
+        webDebugLog(czyDebugWlaczony ? "[DEBUG] WLACZONY" : "[DEBUG] WYLACZONY");
+        mrugnijDioda(2, 100);
         return;
     }
 
-    if (licznik >= 4) {
-        if (TRYB_DEBUG) Serial.println(F("[REKALIBRACJA] Start..."));
-        webDebugLog("[REKALIBRACJA] Start (4 mrugniecia)...");
+    // --- 5 mrugnięć: rekalibracja żyroskopu (zawsze dostępne) ---
+    if (licznik == 5) {
+        if (czyDebugWlaczony) Serial.println(F("[REKALIBRACJA] Start..."));
+        webDebugLog("[REKALIBRACJA] Start (5 mrugniec)...");
         kalibracjaZyroskopu();
         mrugnijDioda(3, 200);
-        if (TRYB_DEBUG) Serial.println(F("[REKALIBRACJA] Gotowe."));
+        if (czyDebugWlaczony) Serial.println(F("[REKALIBRACJA] Gotowe."));
         webDebugLog("[REKALIBRACJA] Gotowe.");
-    } else if (licznik >= 3) {
-        trybScrolla = true;
-        if (TRYB_DEBUG) Serial.println(F("[SCROLL] ON"));
-        webDebugLog("[SCROLL] ON");
-    } else if (licznik == 2) {
+        return;
+    }
+
+    // --- 4 mrugnięcia: toggle trybu scrolla (zawsze dostępne) ---
+    if (licznik == 4) {
+        trybScrolla = !trybScrolla;
+        ustawBlyskLed(CZAS_BLYSKU_LED_MS);
+        if (czyDebugWlaczony) {
+            Serial.println(trybScrolla ? F("[SCROLL] ON") : F("[SCROLL] OFF"));
+        }
+        webDebugLog(trybScrolla ? "[SCROLL] ON" : "[SCROLL] OFF");
+        return;
+    }
+
+    // --- Kliknięcia (1–3) są blokowane w trybie scrolla ---
+    if (trybScrolla) return;
+
+    if (licznik == 3) {
         wyslijKlikniecie(MOUSE_RIGHT);
         licznikKlikPrawych++;
-        if (TRYB_DEBUG) Serial.println(F("[KLIK] PRAWY"));
+        if (czyDebugWlaczony) Serial.println(F("[KLIK] PRAWY"));
         webDebugLog("[KLIK] PRAWY");
+    } else if (licznik == 2) {
+        wyslijPodwojnyKlikLewy();
+        licznikKlikLewych += 2;
+        if (czyDebugWlaczony) Serial.println(F("[KLIK] DOUBLE LEWY"));
+        webDebugLog("[KLIK] DOUBLE LEWY");
     } else if (licznik == 1) {
         wyslijKlikniecie(MOUSE_LEFT);
         licznikKlikLewych++;
-        if (TRYB_DEBUG) Serial.println(F("[KLIK] LEWY"));
+        if (czyDebugWlaczony) Serial.println(F("[KLIK] LEWY"));
         webDebugLog("[KLIK] LEWY");
     }
 }
@@ -370,7 +423,7 @@ void obsluzKlikniecia() {
 // ======================== DIAGNOSTYKA ==============================
 
 void diagnostyka() {
-    if (!TRYB_DEBUG) return;
+    if (!czyDebugWlaczony) return;
 
     unsigned long teraz = millis();
     if ((teraz - ostatniCzasDiagnostyki) < OKRES_DIAGNOSTYKI_MS) return;
@@ -396,10 +449,10 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
 
-    if (TRYB_DEBUG) {
+    if (czyDebugWlaczony) {
         Serial.println();
         Serial.println(F("============================================"));
-        Serial.println(F("  HEFAS – Air Mouse  |  Inicjalizacja..."));
+        Serial.println(F("  HEFAS 4.0 – Air Mouse  |  Inicjalizacja..."));
         Serial.println(F("============================================"));
     }
 
@@ -407,33 +460,34 @@ void setup() {
     czujnikIMU.initialize();
 
     if (!czujnikIMU.testConnection()) {
-        if (TRYB_DEBUG) Serial.println(F("[BLAD] MPU6050 brak odpowiedzi!"));
+        if (czyDebugWlaczony) Serial.println(F("[BLAD] MPU6050 brak odpowiedzi!"));
         while (true) { mrugnijDioda(5, 100); delay(500); }
     }
-    if (TRYB_DEBUG) Serial.println(F("[OK] MPU6050 polaczony."));
+    if (czyDebugWlaczony) Serial.println(F("[OK] MPU6050 polaczony."));
 
     kalibracjaZyroskopu();
 
     usbMysz.begin();
     USB.begin();
-    if (TRYB_DEBUG) Serial.println(F("[OK] USB HID Mouse."));
+    if (czyDebugWlaczony) Serial.println(F("[OK] USB HID Mouse."));
 
     bleMysz.begin();
-    if (TRYB_DEBUG) Serial.println(F("[OK] BLE Mouse."));
+    if (czyDebugWlaczony) Serial.println(F("[OK] BLE Mouse."));
 
     webDebugInit();
 
     mrugnijDioda(3, 200);
 
-    if (TRYB_DEBUG) {
+    if (czyDebugWlaczony) {
         Serial.println(F("============================================"));
-        Serial.println(F("  HEFAS GOTOWY"));
-        Serial.println(F("  1 mrug  = lewy klik"));
-        Serial.println(F("  2 mrug  = prawy klik"));
-        Serial.println(F("  3 mrug  = tryb scrolla (LED ON)"));
-        Serial.println(F("  2 mrug  = wyjscie ze scrolla (LED OFF)"));
-        Serial.println(F("  4 mrug  = rekalibracja zyroskopu"));
-        Serial.println(F("  dlugie  = przytrzymanie (drag)"));
+        Serial.println(F("  HEFAS 4.0 GOTOWY"));
+        Serial.println(F("  1 mrug  = LPM"));
+        Serial.println(F("  2 mrug  = double-click LPM"));
+        Serial.println(F("  3 mrug  = PPM"));
+        Serial.println(F("  4 mrug  = toggle scrolla (LED ON/OFF)"));
+        Serial.println(F("  5 mrug  = rekalibracja zyroskopu"));
+        Serial.println(F("  6 mrug  = toggle trybu debug"));
+        Serial.println(F("  dlugie  = przytrzymanie (drag & drop)"));
         Serial.println(F("============================================"));
     }
 }
@@ -473,23 +527,27 @@ void loop() {
 
 /**
  * ============================================================
- *  RAPORT KOŃCOWY
+ *  RAPORT KOŃCOWY – HEFAS 4.0
  * ============================================================
  *
  *  include/hefas_config.h
- *    Piny, czułość, progi filtracji, parametry kliknięć/scrolla.
+ *    Piny, czułość, progi filtracji, parametry mrugnięć/scrolla.
  *
  *  src/main.cpp  (ten plik)
  *    - autokalibracja żyroskopu (200 próbek),
  *    - mapowanie: gx→X, gz→Y (empiryczne),
  *    - podwójna filtracja (próg szumu + strefa martwa),
- *    - 1 mrugnięcie = lewy klik,
- *    - 2 mrugnięcia = prawy klik,
- *    - 3 mrugnięcia = tryb scrolla (dioda świeci ciągle),
- *    - 2 mrugnięcia w trybie scrolla = wyjście,
- *    - długie zamknięcie oka (>600ms) = przytrzymanie lewego
- *      przycisku (drag & drop), dioda świeci do puszczenia,
+ *    - mapowanie mrugnięć:
+ *        1 mrug. = lewy klik (LPM),
+ *        2 mrug. = double-click LPM (otwieranie plików),
+ *        3 mrug. = prawy klik (PPM),
+ *        4 mrug. = toggle trybu scrolla (dioda świeci ciągle),
+ *        5 mrug. = rekalibracja żyroskopu (dioda mruga 3×),
+ *        6 mrug. = toggle trybu debug (dioda mruga 2×),
+ *    - długie zamknięcie oka (≥PROG_PRZYTRZYMANIA_MS) = drag & drop,
  *    - press/release zamiast click(),
+ *    - runtime'owa flaga czyDebugWlaczony – domyślnie OFF (mniejsze
+ *      zużycie energii), włączana sekwencją 6 mrugnięć,
  *    - USB HID > BLE (automatyczny priorytet).
  *
  * ============================================================

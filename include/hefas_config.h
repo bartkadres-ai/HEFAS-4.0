@@ -24,22 +24,26 @@
 #define PROBKI_KALIBRACJI      200    // Próbki kalibracji
 #define CZULOSC_ZYRO_LSB       131.0f // LSB/(°/s) dla ±250°/s
 
-// =================== PARAMETRY DETEKCJI KLIKNIĘĆ ====================
-#define CZAS_DEBOUNCE_MS       50     // Eliminacja drgań [ms]
-#define OKNO_WIELOKLIKU_MS     400    // Max odstęp między impulsami [ms]
-#define CZAS_KROTKIEGO_KLIKU_MS 30    // Czas press/release [ms]
-#define CZAS_BLYSKU_LED_MS     60     // Błysk diody przy kliknięciu [ms]
+// =================== PARAMETRY DETEKCJI MRUGNIĘĆ =====================
+// OKNO_WIELOKLIKU_MS dobrane jako kompromis między responsywnością
+// pojedynczego kliku (krótkie okno = mniejsze opóźnienie LPM) a
+// wykonalnością długich serii do 6 mrugnięć (toggle debug).
+#define CZAS_DEBOUNCE_MS                   50    // Eliminacja drgań [ms]
+#define OKNO_WIELOKLIKU_MS                 300   // Max odstęp między mrugnięciami [ms]
+#define CZAS_KROTKIEGO_KLIKU_MS            80    // Czas press/release [ms]
+#define CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS  60    // Odstęp release→press w double-click [ms]
+#define CZAS_BLYSKU_LED_MS                 60    // Błysk diody przy kliknięciu [ms]
 
 // ================= PRZYTRZYMANIE (DRAG & DROP) ======================
 // Jeśli czujnik jest aktywny nieprzerwanie dłużej niż ten próg,
 // system wciska i trzyma lewy przycisk myszy (drag). Po zwolnieniu
 // czujnika przycisk zostaje puszczony (drop).
-#define PROG_PRZYTRZYMANIA_MS  600
+#define PROG_PRZYTRZYMANIA_MS  305
 
 // ========================= TRYB SCROLLA =============================
-// 3 szybkie mrugnięcia → wejście w tryb scrolla (dioda świeci ciągle).
-// 2 szybkie mrugnięcia → wyjście z trybu scrolla.
-// W trybie scrolla ruch głowy góra/dół steruje kółkiem myszy.
+// 4 mrugnięcia → toggle trybu scrolla (wejście / wyjście).
+// W trybie scrolla dioda świeci ciągle, ruch głowy góra/dół steruje
+// kółkiem myszy, a kliknięcia (1–3 mrugnięcia) są zablokowane.
 #define DZIELNIK_SCROLLA       4      // Skalowanie prędkości scrolla
 
 // ========================= KIERUNKI OSI =============================
@@ -47,8 +51,10 @@
 #define ODWROC_OS_Y            (1)
 
 // ========================= DIAGNOSTYKA ==============================
+// Flaga sterująca wypisywaniem logów na Serial została przeniesiona
+// do zmiennej runtime `czyDebugWlaczony` (w main.cpp) — domyślnie
+// wyłączona, włączana sekwencją 6 mrugnięć.
 #define PREDKOSC_SERIAL        115200
-#define TRYB_DEBUG             true
 #define OKRES_DIAGNOSTYKI_MS   500
 
 // ===================== WEB DEBUG (WiFi AP) ===========================
