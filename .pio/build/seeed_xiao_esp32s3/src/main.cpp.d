@@ -208,6 +208,16 @@
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLEHIDDevice.h \
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLE2902.h \
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/HIDTypes.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLEDevice.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/bt/host/bluedroid/api/include/api/esp_gattc_api.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/bt/include/esp32c3/include/esp_bt.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLEClient.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLERemoteService.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLERemoteCharacteristic.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLERemoteDescriptor.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLEAdvertisedDevice.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLEScan.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLEUtils.h \
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/cores/esp32/USB.h \
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/USB/src/USBHIDMouse.h \
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/USB/src/USBHID.h \
@@ -223,4 +233,6 @@
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/arduino_tinyusb/tinyusb/src/common/tusb_debug.h \
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/arduino_tinyusb/tinyusb/src/class/hid/hid_device.h \
  C:/Users/werte/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/arduino_tinyusb/tinyusb/src/class/hid/hid.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/libraries/USB/src/USBHIDKeyboard.h \
+ C:/Users/werte/.platformio/packages/framework-arduinoespressif32/cores/esp32/Print.h \
  include/hefas_config.h include/hefas_webdebug.h include/hefas_config.h

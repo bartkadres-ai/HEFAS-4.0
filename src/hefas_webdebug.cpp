@@ -30,24 +30,32 @@ extern uint32_t licznikKlikPrawych;
 // Detektor analogowy TCRT5000 (sygnał z fototranzystora)
 extern float    tcrtBaseline;
 extern float    tcrtFiltered;
+extern float    tcrtFast;
 extern int      tcrtRaw;
 extern bool     wirtualnyStanCzujnika;
+extern bool     okoPotwierdzoneZamkniete;
+extern bool     trybBezprzewodowy;
+extern bool     statusUsbHidAktywny;
+extern bool     statusUsbKabelAktywny;
+extern bool     statusOgniwoMontowane;
+extern bool     statusLadowanie;
+extern bool     bleRadioWlaczony;
+extern bool     bleUspionyBezczynnoscia;
 
 // Runtime flaga debug (toggle 6 mrugnięć) — wyświetlana jako dot
 extern bool     czyDebugWlaczony;
+extern bool     trwaKalibracja;
 
 // Maszyna stanów wieloklików — podgląd na żywo dla diagnostyki
 extern uint8_t       licznikImpulsow;
 extern unsigned long czasOstatniegoImpulsu;
-
-// Monitor baterii (D16 = GPIO10)
-extern bool      bateriaPodlaczona;
-extern float     bateriaNapiecie;
-extern uint8_t   bateriaProcent;
-extern int       bateriaRawAdc;
+extern unsigned long czasPierwszegoImpulsuSerii;
+extern unsigned long ostatniaPrzerwaMiedzyImpulsamiMs;
+extern unsigned long deadlineKoniecSeriiMs;
 
 bool webPauzaMyszy = false;
 bool webZadanieRekalibracji = false;
+uint8_t webLogMask = WEBLOG_DOMYSLNA_MASKA;
 
 // ======================== BUFOR LOGOW ==============================
 
@@ -109,17 +117,25 @@ h1{color:var(--ac);font-size:1.15em}
 .bk{background:var(--yl);color:#111}
 .bc{background:var(--bd);color:var(--tx)}
 .br button:active{opacity:.7}
+.flt{display:flex;flex-wrap:wrap;gap:10px 14px;margin-bottom:10px;padding:10px 12px;background:var(--pn);border:1px solid var(--bd);border-radius:8px;font-size:.78em}
+.flt label{display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
+.flt input{accent-color:var(--ac)}
+.flt .dim{color:#666;text-decoration:line-through}
 </style></head><body>
 <div class="top">
 <h1>HEFAS Debug Monitor</h1>
 <div class="dots">
-<span><span class="dot" id="du"></span>USB</span>
+<span><span class="dot" id="du"></span>HID</span>
+<span><span class="dot" id="duk"></span>USB</span>
+<span><span class="dot bat" id="dogn"></span>Ogn.</span>
+<span><span class="dot" id="dlad"></span>Ład.</span>
 <span><span class="dot" id="ds"></span>Scroll</span>
 <span><span class="dot" id="dd"></span>Drag</span>
 <span><span class="dot" id="dp"></span>Pauza</span>
 <span><span class="dot" id="dg"></span>Debug</span>
 <span><span class="dot eye" id="de"></span>Oko</span>
-<span><span class="dot bat" id="db"></span><b id="dbp">--</b>%</span>
+<span><span class="dot" id="db"></span>BLE</span>
+<span><span class="dot" id="dkal"></span>Kal.</span>
 </div></div>
 <div class="grid">
 <div class="pn mv">
@@ -135,13 +151,15 @@ h1{color:var(--ac);font-size:1.15em}
 <div class="cnt">
 L: <b id="cl" class="vl">0</b> &nbsp; R: <b id="cr" class="vl">0</b><br>
 dX:<b id="vx">0</b> dY:<b id="vy">0</b><br>
-<span style="color:#888">SERIA</span> <b id="im" class="vl" style="color:var(--yl)">0</b><br>
-<b id="mss" style="color:#888">--ms</b> / <b id="oww" style="color:#888">400</b><br>
-<span style="color:#888">TCRT</span><br>
-R:<b id="tr">0</b> F:<b id="tf">0</b><br>
+<span style="color:#888">SERIA</span> <b id="im" class="vl" style="color:var(--yl)">0</b>
+<span style="color:#888"> Kal.</span> <b id="kalSt" style="color:#888">—</b><br>
+<b id="mss" style="color:#888">--ms</b> cisza:<b id="serDl" style="color:#888">--</b> T:<b id="serT">0</b> przerwa:<b id="serG">0</b><br>
+<span style="color:#888">TCRT (wykres=Fast)</span><br>
+R:<b id="tr">0</b> Fs:<b id="tf">0</b><br>
 B:<b id="tb">0</b> <b id="te" style="color:var(--gn)">OTW</b><br>
-<span style="color:#888">BAT</span> <b id="bvv" style="color:var(--gn)">--V</b><br>
-<b id="bpp" style="color:var(--gn)">--%</b> <span style="color:#888;font-size:.85em">pin:<b id="brr">0</b>mV</span>
+<span style="color:#888">Zasil.</span> <b id="bzas" style="color:var(--yl)">—</b><br>
+<span style="color:#888;font-size:.85em" id="bzasDet"></span><br>
+<span style="color:#888">BLE</span> <b id="bles">OFF</b>
 </div></div>
 <div class="rcol">
 <div class="pn chw">
@@ -152,38 +170,38 @@ B:<b id="tb">0</b> <b id="te" style="color:var(--gn)">OTW</b><br>
 <div class="pn chw ct">
 <div class="tt">Sygnal TCRT</div>
 <canvas id="cht"></canvas>
-<div class="leg"><span style="color:#00d4ff">&#9632; Filt</span> &nbsp;<span style="color:#888">&#9632; Base</span> &nbsp;<span style="color:#e94560">&#9632; Trig</span> &nbsp;<span style="color:#f39c12">&#9632; Rel</span></div>
+<div class="leg"><span style="color:#00d4ff">&#9632; Fast</span> &nbsp;<span style="color:#888">&#9632; Base</span> &nbsp;<span style="color:#e94560">&#9632; Trig</span> &nbsp;<span style="color:#f39c12">&#9632; Rel</span></div>
 </div>
 </div></div>
+<div class="flt" id="flt">
+<label><input type="checkbox" id="fG" value="1" onchange="ustawFiltry()"> Zyroskop</label>
+<label><input type="checkbox" id="fI" value="2" onchange="ustawFiltry()"> Czujnik IR</label>
+<label><input type="checkbox" id="fH" value="4" onchange="ustawFiltry()"> BLE/USB</label>
+<label><input type="checkbox" id="fF" value="8" checked onchange="ustawFiltry()"> Mrugniecia</label>
+<label><input type="checkbox" id="fB" value="16" checked onchange="ustawFiltry()"> Zasilanie</label>
+</div>
 <div id="lg"></div>
 <details class="lgd">
 <summary>Legenda - jak czytac panel</summary>
 <div class="lgr">
 <b>Kropki statusu (gora ekranu)</b><br>
-<i>USB</i> = mysz HID widoczna po USB-C (gdy zgaszone aktywne jest BLE)<br>
+<i>HID</i> = host widzi mysz USB-HID (tud_mounted)<br>
+<i>USB</i> = kabel USB / 5 V (tud_connected lub pin ADC) — może być <b>razem z Ogn.</b> przy ładowaniu<br>
+<i>Ogn.</i> = ogniwo na BAT+/BAT− (montaż w projekcie; nie pomiar %)<br>
+<i>Ład.</i> = ogniwo + zasilanie z USB (ładowarka na płytce; czerwona LED na PCB)<br>
 <i>Scroll</i> = wlaczony tryb scrolla (ruch glowy = przewijanie zamiast kursora)<br>
 <i>Drag</i> = trwa przytrzymanie LPM (drag and drop)<br>
 <i>Pauza</i> = mysz spauzowana przyciskiem ponizej<br>
-<i>Debug</i> = wlaczone logowanie na Serial (mocniej grzeje)<br>
-<i>Oko</i> = detektor TCRT widzi zamkniete oko<br>
-<i>BAT</i> = stan ogniwa Akyga. Zielona = OK (&gt; 40%), zolta = nisko (20-40%), czerwona = krytyczna (&lt; 20%), szara = BRAK (&lt; 2.8 V). Przy USB i podlaczonym ogniwie pokazuje tez napięcie i procent.<br>
-<b>Monitor baterii (panel BAT)</b><br>
-Ogniwo: <i>Akyga Li-Pol 1900 mAh 1S 3,7 V</i> — podlaczone tylko <i>+</i> i <i>−</i> do BAT+/BAT− XIAO;
-srodkowy pin JST (NTC) nieuzywany.<br>
-Pin <i>D16 = GPIO10 = ADC_BAT</i>, wewnetrzny dzielnik <i>1:11</i> (R9=100K + R8=10K).<br>
-Odczyt uzywa <i>analogReadMilliVolts()</i> z atenuacja <i>ADC_11db</i> + trimmed-mean 64 probek.<br>
-Pierwsza liczba = napiecie ogniwa Li-Pol [V]. <span class="lk">Pelna = 4.20 V, pusta (cutoff) = 3.20 V.</span><br>
-Druga liczba = procent stanu naladowania wyliczony z 8-punktowej krzywej rozladowania Li-Pol.<br>
-<span class="lk">Plateau 3.65-4.20 V to ok. 80% pojemnosci - dlatego procent dlugo trzyma sie wysoko.</span><br>
-<span class="lk">pin:</span> = napiecie na pinie GPIO10 [mV] usrednione z <i>64 probek</i> — uzyteczne do kalibracji dzielnika.<br>
-Kalibracja: <span class="lk">DZIELNIK_BATERII = V_multimetr / (pin_mV / 1000.0)</span> w hefas_config.h.<br>
-<span class="lk">(USB)</span> = pomiar wykonany przy podlaczonym USB; napiecie moze byc minimalnie wyzsze (~0.05 V) podczas ladowania.<br>
-<i>BRAK</i> = napiecie ponizej 2.5 V — ogniwo niepodlaczone lub zle +/−. Przy OK: pin ok. 300–380 mV, Vbat 3.3–4.2 V.<br>
+<i>Debug</i> = <b>czyDebugWlaczony</b> (domyslnie OFF). Wlacz/wylacz <b>6 mrugnieciami</b>. Gdy ON: szczegolowe logi Serial + w panelu [SERIA], [KLIK], [SCROLL], [GEST]. Gdy OFF: mniej wpisow, mniejsze obciazenie CPU.<br>
+<i>Oko</i> = oko <b>potwierdzone</b> (liczy sie do klikniecia; V:ZAMKN/OTW = surowy prog)<br>
+<i>BLE</i> (kropka) = brak USB-HID — mysz po Bluetooth. <i>BLE</i> w panelu: ON / SLEEP / OFF.<br>
+<i>Kal.</i> (kropka + pole <b>Kal. TRWA</b> obok SERIA) = trwa rekalibracja MPU+TCRT (~3 s). Logi <b>[KAL]</b> w filtrze Mrugniecia sa <b>zawsze</b> (start, stabilizacja, gotowe) — takze gdy Debug OFF.<br>
+Ładowarka <b>tylko z prądem</b> (bez linii danych) może nie zapalić kropki USB — wtedy opcjonalnie PIN_VBUS_ADC w config.<br>
 <b>Licznik serii mrugniec (SERIA)</b><br>
-Pierwsza liczba (zolta) = ile mrugniec system zliczyl w trwajacej serii<br>
-Druga liczba = czas od ostatniego mrugniecia (zielona = w oknie, czerwona = juz blisko timeoutu)<br>
-Trzecia liczba = aktualne okno (OKNO_WIELOKLIKU_MS)<br>
-Aby PPM (3 mrug) zadzialal, przerwa miedzy mrugnieciami musi byc &lt; okno<br>
+Zolta liczba = ile mrugniec w serii. <b>cisza</b> = pozostaly czas do akcji (zalezy od N: 1=350ms … 6=1000ms).<br>
+<b>T</b> = czas calej serii od 1. impulsu. <b>przerwa</b> = ostatnia przerwa miedzy otwarciami.<br>
+Laczenie impulsow: przerwa &lt; <b>OKNO</b> (600 ms). Cisza po N: 350/450/640/770/910/1000 ms.<br>
+3×: T w zakresie 120–1300 ms (inaczej odrzucone). 4× max T 1900 ms, 5× 2500 ms, 6× 3100 ms. Krotkie serie liczone bez min. przerwy miedzy otwarciami.<br>
 <b>Wykres ruchu glowy</b><br>
 Linia <i style="color:#e94560">czerwona</i> = predkosc kursora dX (lewo / prawo z zyroskopu)<br>
 Linia <i style="color:#00d4ff">cyjan</i> = predkosc kursora dY (gora / dol)<br>
@@ -195,7 +213,8 @@ np. dX = 10 -&gt; kursor leci o 10 px / tick = <b>1000 px/s</b> (ok. 1/2 ekranu 
 Wzor: dX = predkosc_obrotu_glowy [&deg;/s] &times; CZULOSC_MYSZY (0.4).<br>
 Czyli obrot szyja 50 &deg;/s -&gt; dX = 20 -&gt; <b>2000 px/s</b>. Max HID = 127.<br>
 <b>Wykres sygnalu TCRT</b><br>
-Linia <i style="color:#00d4ff">cyjan</i> = sygnal po filtracji EMA (to co widzi algorytm)<br>
+Linia <i style="color:#00d4ff">cyjan</i> = <b>tcrtFast</b> (ten sam sygnal co progi zamkniecia)<br>
+Czerwone tlo wykresu = oko <b>potwierdzone</b> (nie tylko chwilowy prog)<br>
 <i style="color:#888">Szara</i> pozioma = baseline (oko otwarte, ambient light)<br>
 <i style="color:#e94560">Czerwona</i> pozioma = prog TRIGGER (przekroczenie w dol = oko zamknieto)<br>
 <i style="color:#f39c12">Zolta</i> pozioma = prog RELEASE (powrot nad nia = oko otwarte)<br>
@@ -206,21 +225,27 @@ Liczby R / F / B obok = surowy ADC / po filtrze / baseline<br>
 Wyzsza wartosc = mniej swiatla IR odbitego (oko otwarte, fototranzystor "widzi gleboko").<br>
 Nizsza wartosc = wiecej odbicia (powieka blizej czujnika -&gt; jasniej dla IR).<br>
 Typowy Baseline siedzi w okolicach 1500-2500 (zalezy od montazu i oswietlenia).<br>
-Mrugniecie = spadek o min. <b>OFFSET_TRIGGER = 350</b> ADC (ok. 280 mV) ponizej Baseline.<br>
-Powrot = wzrost ponad Baseline - <b>OFFSET_RELEASE = 120</b> ADC (ok. 96 mV).<br>
+Mrugniecie = spadek o min. <b>OFFSET_TRIGGER</b> (320 ADC) ponizej Baseline na sygnale <b>Fast</b>.<br>
+Powrot = wzrost ponad Baseline - <b>OFFSET_RELEASE</b> (140 ADC).<br>
+Potwierdzenie: <b>2</b> kolejne probki 10 ms (PROBKI_POTWIERDZENIA_STANU).<br>
 Roznica 350 vs 120 = histereza, broni przed migotaniem przy szumie.<br>
 Zdarzenie mechaniczne = spadek glebszy niz Baseline - <b>OFFSET_MAX_ZWARCIA = 800</b> ADC (zdjecie okularow, zaslon czujnika) — system ignoruje i resetuje do "otwarte".<br>
 <b>Mapowanie mrugniec (czasy z hefas_config.h)</b><br>
-1 mrug -&gt; LPM &nbsp; 2 mrug -&gt; double-click LPM &nbsp; 3 mrug -&gt; PPM<br>
-4 mrug -&gt; toggle scrolla &nbsp; 5 mrug -&gt; rekalibracja &nbsp; 6 mrug -&gt; toggle debug<br>
-<span class="lk">Aby zliczyc serie:</span> przerwa miedzy mrugnieciami &lt; <b>OKNO_WIELOKLIKU_MS = 400 ms</b>.<br>
-<span class="lk">Aby mrugniecie sie liczolo:</span> zamkniecie oka min. <b>CZAS_MIN_MRUG_MS = 80 ms</b> (krotsze = ruch glowy, ignorowane).<br>
+1 mrug -&gt; LPM &nbsp; 2 mrug -&gt; double (w scrollu: tylko scroll OFF) &nbsp; 3 mrug -&gt; PPM<br>
+4 mrug -&gt; scroll ON &nbsp; 5 mrug -&gt; rekalibracja &nbsp; 6 mrug -&gt; przelacznik Debug (Serial + logi szczegolowe)<br>
+<span class="lk">Scroll:</span> wylacza kazde mrugniecie &ge;2 (2× tylko OFF, 3× OFF + PPM). Wolniejszy: DZIELNIK_SCROLLA=7, prog Z PROG_ZYRO_SKROL_DEG_S=3.0.<br>
+<span class="lk">Aby mrugniecie sie liczolo:</span> zamkniecie oka min. <b>CZAS_MIN_MRUG_MS</b> (krotsze = szum, ignorowane).<br>
 <span class="lk">Aby uniknac drag:</span> otworz oko wyraznie miedzy mrugnieciami — EMA musi zdazyc wykryc otwarcie.<br>
-<span class="lk">Aby zrobic drag:</span> trzymaj oko zamkniete CIAGLE dluzej niz 500 ms.<br>
-<span class="lk">Baseline adaptuje sie</span> do zmian swiatla/pozycji glowy na biezaco (EMA_ALPHA_WOLNY = 0.005, stala czasowa ~2 s).<br>
+<span class="lk">Drag:</span> oko zamkniete &gt; <b>PROG_PRZYTRZYMANIA_MS</b> (850 ms). Zamkniecie 280–850 ms = <b>bez kliku</b> (nie myl z mrugnieciem). Koniec dragu: otwarcie ~50 ms (5 probek).<br>
+<span class="lk">Baseline adaptuje sie</span> wolno (EMA_ALPHA_WOLNY = 0.003), zamrozony w trakcie serii mrugniec.<br>
+<b>Gest przechylenia (Gy)</b><br>
+Przechyl glowe w <b>PRAWO</b> ~0,28 s, prog 40 deg/s (ta sama os co w kodzie, ODWROC_GY=-1) -&gt; <b>Ctrl+Win+O</b>.<br>
+<span class="lk">Tylko USB</span> (mysz+klawiatura); na samym BLE mysz dziala, skrot nie.<br>
+<b>Filtry logow</b> — checkboxy nad logiem. Domyslnie: <b>Mrugniecia</b> + <b>Zasilanie</b>. Zyro, IR (szczegoly TCRT/kal. baseline), BLE/USB opcjonalnie.<br>
+<b>WebDebug vs Debug (kropka)</b> — panel WiFi dziala zawsze (wykresy, SERIA, kropki). Flaga Debug dotyczy tylko rozbudowanych logow tekstowych i Serialu.<br>
 <b>Przyciski</b><br>
 <i>PAUZA / WZNOW</i> = blokuje wysylanie ruchu i klikniec (logika dalej dziala)<br>
-<i>REKALIBRACJA</i> = ponowna kalibracja zyroskopu (offset Gx/Gy/Gz), bez baseline TCRT<br>
+<i>REKALIBRACJA</i> = ponowna kalibracja MPU6050 + TCRT5000 (~3 s, async)<br>
 <i>WYCZYSC</i> = czysci historie logow w tym panelu (nie kasuje danych w MCU)<br>
 <b>Czestotliwosci</b><br>
 Petla glowna = 100 Hz (OKRES_PETLI_MS = 10 ms) - tyle razy na sekunde liczymy detektor i ruch.<br>
@@ -236,7 +261,32 @@ Historia wykresow = 200 probek = ok. 32 sekundy przy obecnym tempie odpytywania.
 <script>
 var MH=200,hx=[],hy=[],hf=[],he=[],li=0,plc=0,prc=0,lg=document.getElementById('lg');
 var IDLE_BTN='#333355',DRAG_L='#e94560';
-var lastSnap=null,mlTok=null,mrTok=null,pollGen=0,POLL_MS=160;
+var lastSnap=null,mlTok=null,mrTok=null,pollGen=0,POLL_MS=160,lmSync=0;
+
+function maskaZCheckboxow(){
+ var m=0;
+ if(document.getElementById('fG').checked)m|=1;
+ if(document.getElementById('fI').checked)m|=2;
+ if(document.getElementById('fH').checked)m|=4;
+ if(document.getElementById('fF').checked)m|=8;
+ if(document.getElementById('fB').checked)m|=16;
+ return m;
+}
+function ustawCheckboxy(m){
+ document.getElementById('fG').checked=!!(m&1);
+ document.getElementById('fI').checked=!!(m&2);
+ document.getElementById('fH').checked=!!(m&4);
+ document.getElementById('fF').checked=!!(m&8);
+ document.getElementById('fB').checked=!!(m&16);
+}
+function ustawFiltry(){
+ fetch('/filtry?m='+maskaZCheckboxow(),{cache:'no-store'}).catch(function(){});
+}
+function syncFiltryStart(){
+ fetch('/filtry',{cache:'no-store'}).then(function(x){return x.json()}).then(function(j){
+  if(j.m!==undefined)ustawCheckboxy(j.m);
+ }).catch(function(){});
+}
 
 function sC(){
  var c=document.getElementById('ch');c.width=c.parentElement.clientWidth-26;c.height=170;
@@ -319,7 +369,7 @@ var plc0=plc,prc0=prc;
 r.l.forEach(function(t){var d=document.createElement('div');d.textContent=t;lg.appendChild(d)});
 if(r.l.length)lg.scrollTop=lg.scrollHeight;
 li=r.i;
-hx.push(r.dx);hy.push(r.dy);hf.push(r.tf);he.push(r.te?1:0);
+hx.push(r.dx);hy.push(r.dy);hf.push(r.txf);he.push(r.tpo?1:0);
 if(hx.length>MH)hx.shift();if(hy.length>MH)hy.shift();
 if(hf.length>MH)hf.shift();if(he.length>MH)he.shift();
 document.getElementById('vx').textContent=r.dx;
@@ -327,36 +377,38 @@ document.getElementById('vy').textContent=r.dy;
 document.getElementById('cl').textContent=r.lc;
 document.getElementById('cr').textContent=r.rc;
 document.getElementById('tr').textContent=r.tr;
-document.getElementById('tf').textContent=r.tf;
+document.getElementById('tf').textContent=r.txf;
 document.getElementById('tb').textContent=r.tb;
+var zEl=document.getElementById('bzas');
+var zDet=document.getElementById('bzasDet');
+var zParts=[];
+if(r.ogn)zParts.push('Ogniwo');
+if(r.u)zParts.push('USB-HID');
+else if(r.uc)zParts.push('USB');
+if(r.lad)zParts.push('ładowanie');
+if(!r.u&&r.ogn)zParts.push('mysz→BLE');
+zEl.textContent=zParts.length?zParts.join(' + '):'—';
+zEl.style.color=r.lad?'var(--yl)':(r.u?'var(--gn)':'#aaa');
+if(zDet)zDet.textContent='HID:'+(r.u?'TAK':'nie')+' · USB:'+(r.uc?'TAK':'nie')+' · Ogn.:'+(r.ogn?'TAK':'nie');
+var bleTxt=r.bleSlp?'SLEEP':(r.ble?'ON':'OFF');
+document.getElementById('bles').textContent=bleTxt;
+document.getElementById('bles').style.color=r.bleSlp?'var(--yl)':(r.ble?'var(--gn)':'#888');
 document.getElementById('im').textContent=r.im;
 var msEl=document.getElementById('mss');
 msEl.textContent=(r.im>0?r.ms:'--')+'ms';
-msEl.style.color=(r.im>0 && r.ms>r.ow*0.7)?'var(--rd)':(r.im>0?'var(--gn)':'#888');
-document.getElementById('oww').textContent=r.ow;
-var dbEl=document.getElementById('db'),dbpEl=document.getElementById('dbp');
-var bvvEl=document.getElementById('bvv'),bppEl=document.getElementById('bpp'),brrEl=document.getElementById('brr');
-brrEl.textContent=r.br;
-if(!r.bo){
- dbEl.className='dot bat off';
- dbpEl.textContent='--';
- bvvEl.textContent='--V'; bvvEl.style.color='#888';
- bppEl.textContent='BRAK'; bppEl.style.color='#888';
-}else{
- var cls='dot bat on';
- if(r.bp<=20)cls='dot bat cr';
- else if(r.bp<=40)cls='dot bat lo';
- dbEl.className=cls;
- dbpEl.textContent=r.bp;
- bvvEl.textContent=r.bv+'V'+(r.u?' USB':'');
- bppEl.textContent=r.bp+'%';
- var col=(r.bp<=20)?'var(--rd)':(r.bp<=40?'var(--yl)':'var(--gn)');
- bvvEl.style.color=col; bppEl.style.color=col;
-}
+var limSerii=r.serDl>0?r.serDl:600;
+msEl.style.color=(r.im>0 && r.ms>limSerii*0.7)?'var(--rd)':(r.im>0?'var(--gn)':'#888');
+document.getElementById('serDl').textContent=r.im>0?(r.serDl+'ms'):'--';
+document.getElementById('serT').textContent=r.serT||0;
+document.getElementById('serG').textContent=r.serG||0;
+if(r.lm!==undefined && !lmSync){ustawCheckboxy(r.lm);lmSync=1;}
 var teEl=document.getElementById('te');
-teEl.textContent=r.te?'ZAMKN':'OTW';
-teEl.style.color=r.te?'var(--rd)':'var(--gn)';
-sd('du',r.u);sd('ds',r.s);sd('dd',r.d);sd('dp',r.p);sd('dg',r.dg);sd('de',r.te);
+teEl.textContent=(r.te?'V:Z ':'V:O ')+(r.tpo?'POTW':'');
+teEl.style.color=r.tpo?'var(--rd)':(r.te?'#c77':'var(--gn)');
+var kalEl=document.getElementById('kalSt');
+if(kalEl){kalEl.textContent=r.kal?'TRWA ~3s':'—';kalEl.style.color=r.kal?'var(--yl)':'#888';}
+sd('du',r.u);sd('duk',r.uc);sd('dogn',r.ogn);sd('dlad',r.lad);
+sd('ds',r.s);sd('dd',r.d);sd('dp',r.p);sd('dg',r.dg);sd('de',r.tpo);sd('db',!r.u);sd('dkal',r.kal);
 plc=r.lc;prc=r.rc;
 syncMouseSvg(r);
 if(r.lc>plc0)flashMl();
@@ -367,6 +419,7 @@ dCh();dCT(r.tb,r.tt,r.tx);dJ(r.dx,r.dy);
 }catch(e){}
 finally{if(gen===pollGen)setTimeout(pollLoop,POLL_MS);}
 }
+syncFiltryStart();
 pollLoop();
 </script></body></html>
 )rawliteral";
@@ -386,7 +439,7 @@ static void obsluzLogi() {
     int start = (od > najstarszy) ? od : najstarszy;
 
     String json;
-    json.reserve(1152);
+    json.reserve(1280);
     json = "{\"l\":[";
 
     bool pierwszy = true;
@@ -410,8 +463,16 @@ static void obsluzLogi() {
     json += ",\"rc\":";   json += String(licznikKlikPrawych);
     json += ",\"tr\":";   json += String(tcrtRaw);
     json += ",\"tf\":";   json += String((int)tcrtFiltered);
+    json += ",\"txf\":";  json += String((int)tcrtFast);
     json += ",\"tb\":";   json += String((int)tcrtBaseline);
     json += ",\"te\":";   json += wirtualnyStanCzujnika ? "true" : "false";
+    json += ",\"tpo\":";  json += okoPotwierdzoneZamkniete ? "true" : "false";
+    json += ",\"bat\":";  json += trybBezprzewodowy ? "true" : "false";
+    json += ",\"uc\":";  json += statusUsbKabelAktywny ? "true" : "false";
+    json += ",\"ogn\":"; json += statusOgniwoMontowane ? "true" : "false";
+    json += ",\"lad\":"; json += statusLadowanie ? "true" : "false";
+    json += ",\"ble\":";  json += bleRadioWlaczony ? "true" : "false";
+    json += ",\"bleSlp\":"; json += bleUspionyBezczynnoscia ? "true" : "false";
     json += ",\"tt\":";   json += String(OFFSET_TRIGGER);
     json += ",\"tx\":";   json += String(OFFSET_RELEASE);
     json += ",\"im\":";   json += String(licznikImpulsow);
@@ -421,16 +482,26 @@ static void obsluzLogi() {
                               : (teraz - czasOstatniegoImpulsu);
         json += ",\"ms\":"; json += String(delta);
     }
-    json += ",\"ow\":";   json += String(OKNO_WIELOKLIKU_MS);
-    json += ",\"bo\":";   json += bateriaPodlaczona ? "true" : "false";
-    json += ",\"bp\":";   json += String(bateriaProcent);
-    json += ",\"bv\":";   json += String(bateriaNapiecie, 2);
-    json += ",\"br\":";   json += String(bateriaRawAdc);
-    json += ",\"u\":";    json += tud_mounted() ? "true" : "false";
+    json += ",\"owm\":";  json += String(OKNO_MIEDZY_IMPULSAMI_MS);
+    {
+        unsigned long terazSer = millis();
+        unsigned long serT = (czasPierwszegoImpulsuSerii > 0 && licznikImpulsow > 0)
+                             ? (czasOstatniegoImpulsu - czasPierwszegoImpulsuSerii) : 0;
+        unsigned long serDl = 0;
+        if (licznikImpulsow > 0 && deadlineKoniecSeriiMs > terazSer) {
+            serDl = deadlineKoniecSeriiMs - terazSer;
+        }
+        json += ",\"serT\":"; json += String(serT);
+        json += ",\"serG\":"; json += String(ostatniaPrzerwaMiedzyImpulsamiMs);
+        json += ",\"serDl\":"; json += String(serDl);
+    }
+    json += ",\"u\":";    json += statusUsbHidAktywny ? "true" : "false";
     json += ",\"s\":";    json += trybScrolla ? "true" : "false";
     json += ",\"d\":";    json += przytrzymanieAktywne ? "true" : "false";
     json += ",\"p\":";    json += webPauzaMyszy ? "true" : "false";
     json += ",\"dg\":";   json += czyDebugWlaczony ? "true" : "false";
+    json += ",\"kal\":";  json += trwaKalibracja ? "true" : "false";
+    json += ",\"lm\":";  json += String(webLogMask);
     json += '}';
 
     serwer.sendHeader("Cache-Control", "no-store");
@@ -445,8 +516,26 @@ static void obsluzPauze() {
 
 static void obsluzRekalibracje() {
     webZadanieRekalibracji = true;
+    webDebugLogKategoria(WEBLOG_FSM, "[KAL] Zadanie rekalibracji (przycisk WebDebug)");
     serwer.sendHeader("Cache-Control", "no-store");
     serwer.send(200, "text/plain", "OK");
+}
+
+static void obsluzFiltry() {
+    if (serwer.hasArg("m")) {
+        int m = serwer.arg("m").toInt();
+        if (m < 0) m = 0;
+        if (m > 31) m = 31;
+        webLogMask = (uint8_t)m;
+        serwer.sendHeader("Cache-Control", "no-store");
+        serwer.send(200, "text/plain", "OK");
+        return;
+    }
+    String json = "{\"m\":";
+    json += String(webLogMask);
+    json += '}';
+    serwer.sendHeader("Cache-Control", "no-store");
+    serwer.send(200, "application/json", json);
 }
 
 // ====================== API PUBLICZNE ==============================
@@ -459,6 +548,7 @@ void webDebugInit() {
     serwer.on("/logi",          obsluzLogi);
     serwer.on("/pauza",         obsluzPauze);
     serwer.on("/rekalibracja",  obsluzRekalibracje);
+    serwer.on("/filtry",        obsluzFiltry);
     serwer.begin();
 
     Serial.print(F("[WEBDEBUG] AP: "));
@@ -473,12 +563,14 @@ void webDebugLoop() {
     serwer.handleClient();
 }
 
-void webDebugLog(const char* wiadomosc) {
+void webDebugLogKategoria(WebLogKategoria kat, const char* wiadomosc) {
+    if ((webLogMask & (uint8_t)kat) == 0) return;
     buforLogow[indeksZapisu % ROZMIAR_BUFORA] = String(wiadomosc);
     indeksZapisu++;
 }
 
-void webDebugLog(const String& wiadomosc) {
+void webDebugLogKategoria(WebLogKategoria kat, const String& wiadomosc) {
+    if ((webLogMask & (uint8_t)kat) == 0) return;
     buforLogow[indeksZapisu % ROZMIAR_BUFORA] = wiadomosc;
     indeksZapisu++;
 }

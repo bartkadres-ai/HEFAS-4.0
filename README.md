@@ -1,102 +1,83 @@
-# HEFAS 4.0 - sterowanie myszka ruchem glowy
+# HEFAS 4.0 — sterowanie myszką ruchem głowy
 
-System bezdotykowej obslugi kursora myszy ruchami glowy dla osob z niepelnosprawnosciami.
+System bezdotykowej obsługi kursora myszy ruchami głowy dla osób z niepełnosprawnościami.  
 **HEFAS** = Head-controlled Electronic Functional Assistive System.
 
-Platforma: **Seeed Studio XIAO ESP32-S3 Plus** + **MPU6050** (IMU) + **TCRT5000** (detektor mrugniec, sygnal analogowy) + opcjonalnie **Akyga Li-Pol 1900 mAh 1S 3,7 V** (tylko BAT+/BAT−).
+Platforma: **Seeed Studio XIAO ESP32-S3 Plus** + **MPU6050** (IMU) + **TCRT5000** (mrugnięcia, sygnał analogowy) + opcjonalnie **Akyga Li-Pol 1900 mAh 1S 3,7 V** (BAT+ / BAT−).
 
 ---
 
-## Jak to dziala
+## Jak to działa
 
-### Ruch kursora
+### Ruch kursora (oś Gx i Gz)
 
-- **Os X (lewo / prawo):** predkosc katowa **Gx** z MPU6050 (empirycznie: obrot glowy wokol osi pionowej).
-- **Os Y (gora / dol):** predkosc katowa **Gz** z MPU6050 (empirycznie: pochylenie / ruch glowy w plaszczyznie pionowej).
-- Surowe odczyty zyroskopu sa przeliczane na °/s przez `CZULOSC_ZYRO_LSB` (131 LSB/(°/s) przy zakresie ±250°/s),
-  odejmowany jest offset biasu z kalibracji startowej, potem stosowany jest prog szumu i strefa martwa.
-- Algorytm **rate-control** - delta HID liczona z chwilowej predkosci katowej, nie z pozycji.
-  Dzieki temu system nie kumuluje bledu kalibracji (brak orientacji = brak dryfu pozycji).
-- Strefa martwa + prog szumu odrzucaja mikrodrgania w spoczynku.
-- Skala: 1 jednostka HID ≈ 1 piksel kursora, wzor `dX = predkosc_Gx[°/s] * CZULOSC_MYSZY (0.4)` (analogicznie Gz → dY).
-  Kierunek obu osi odwracasz przez `ODWROC_OS_X` / `ODWROC_OS_Y`.
+- **Oś X (lewo / prawo):** prędkość kątowa **Gx** z MPU6050.
+- **Oś Y (góra / dół):** prędkość kątowa **Gz** z MPU6050.
+- **Oś Gy** nie steruje kursorem — wykorzystywana do **gestu przechylenia** (patrz niżej).
+- Surowe odczyty → °/s przez `CZULOSC_ZYRO_LSB` (131 przy ±250°/s), minus offset z kalibracji, prog szumu i strefa martwa.
+- **Rate-control:** delta HID z chwilowej prędkości, bez kumulacji pozycji (brak dryfu orientacji).
+- Wzór: `dX ≈ predkosc_Gx[°/s] × CZULOSC_MYSZY (0.4)`; kierunek: `ODWROC_OS_X` / `ODWROC_OS_Y`.
 
-### Detektor mrugniec (TCRT5000 analogowy)
+### Detektor mrugnięć (TCRT5000, analogowy na A1)
 
-Czujnik refleksyjny IR czyta intensywnosc swiatla odbitego od oka. Pelny lancuch obrobki sygnalu:
+1. **ADC 12-bit** → `tcrtRaw`.
+2. **Dwa filtry EMA:**
+   - `tcrtFast` (α = `EMA_ALPHA_SZYBKI` = 0,50) — **progi zamknięcia / otwarcia**,
+   - `tcrtFiltered` (α = `EMA_ALPHA_WYSWIETLANIA` = 0,20) — logi / diagnostyka.
+3. **Kalibracja async (~3 s):** 200 próbek równolegle MPU+TCRT (trimmed-mean baseline), potem ~1 s stabilizacji IR.
+4. **Histereza** na `tcrtFast`: `OFFSET_TRIGGER` 320 / `OFFSET_RELEASE` 140 ADC; poniżej `OFFSET_MAX_ZWARCIA` (800) → zdarzenie mechaniczne, reset.
+5. **Baseline wolny** (`EMA_ALPHA_WOLNY` = 0,003) — tylko gdy oko otwarte i **poza serią mrugnięć** (baseline zamrożony w trakcie serii).
+6. **Potwierdzenie stanu:** `PROBKI_POTWIERDZENIA_STANU` = 2 (2×10 ms) zanim impuls trafi do licznika serii — anty-migotanie na progu.
+7. `wirtualnyStanCzujnika` + `okoPotwierdzoneZamkniete` zasilają maszynę mrugnięć i HID.
 
-1. **ADC 12-bit** (0-4095) z pinu A1 - surowy odczyt `tcrtRaw`.
-2. **Filtr EMA** (α = 0.2) wygladza szum -> `tcrtFiltered`.
-3. **Trimmed-mean kalibracja startowa** - 200 probek, odrzucenie 10% skrajnych z gory i dolu, srednia z 80% srodkowych -> `tcrtBaseline` (poziom "oko otwarte").
-4. **Komparator z histereza** - dwa progi wzgledem baseline:
-   - sygnal spada o `OFFSET_TRIGGER` (350 ADC) ponizej baseline → "oko zamkniete",
-   - sygnal wraca powyzej `baseline - OFFSET_RELEASE` (120 ADC) → "oko otwarte",
-   - sygnal spada glebiej niz `baseline - OFFSET_MAX_ZWARCIA` (800 ADC) → zdarzenie
-     mechaniczne (zdjecie okularow, zaslon czujnika) — ignorowane, reset do "otwarte".
-   - TRIGGER > RELEASE = histereza chroniaca przed migotaniem na granicy.
-5. **Adaptacyjny baseline** (wolny EMA, α = `EMA_ALPHA_WOLNY` = 0.005) - ciagla, powolna autokorekta
-   poziomu odniesienia gdy oko jest otwarte (stala czasowa ~2 s). Zmiany oswietlenia lub pozycji
-   glowy sa kompensowane w ~3-5 s, bez zadnych timeoutow. Podczas mrugniec baseline jest zamrozony.
-6. Wirtualna flaga `wirtualnyStanCzujnika` zasila istniejaca **maszyne stanow** wieloklikow,
-   debounce'u i drag&drop - dokladnie tak jak dawniej cyfrowy LM393.
+### Gest: przechyl głowy w prawo (oś Gy)
 
-### Mapowanie mrugniec na akcje
+- **Nie rusza kursora.** Wyraźne przechylenie w **prawo** (~0,28 s), próg **40 °/s**; `ODWROC_GEST_GY = -1` (nie zmieniać na 1 — u tego montażu to fizycznie prawo).
+- **Akcja (tylko USB):** skrót **Ctrl + Win + O** → klawiatura ekranowa w Windows 10/11.
+- Na **samym BLE** gest może się wykryć (LED), ale skrót klawiaturowy **nie jest wysyłany** (brak profilu HID Keyboard w BLE).
+- Cooldown ~2,2 s między gestami.
 
-Maszyna stanow zlicza mrugniecia w **serii** (przerwa miedzy mrugnieciami < `OKNO_WIELOKLIKU_MS`):
+### Mapowanie mrugnięć
 
-| Mrugniec | Akcja |
-|----------|---------------------------------------------------------|
-| 1        | **LPM** (lewy klik)                                     |
-| 2        | **Double-click LPM** (otwieranie plikow / zaznaczanie)  |
-| 3        | **PPM** (prawy klik)                                    |
-| 4        | **Toggle trybu scrolla** (dioda swieci ciagle gdy ON)   |
-| 5        | **Rekalibracja zyroskopu** (offset Gx/Gy/Gz, LED mrugnie 3×; bez ponownego baseline TCRT) |
-| 6        | **Toggle trybu debug Serial** (LED mrugnie 2x)          |
-| Trzymanie oka > `PROG_PRZYTRZYMANIA_MS` | **Drag & drop** (LPM trzymany az do otwarcia oka) |
+Seria: kolejne mrugnięcie w tej samej serii, gdy przerwa (otwarte oko) od poprzedniego otwarcia &lt; `OKNO_MIEDZY_IMPULSAMI_MS` (600 ms). **Cisza po ostatnim impulsie** zależy od licznika: 1→350 ms, 2→450, 3→640, 4→770, 5→910, 6→1000 ms (nie wcześniejszy LPM przy szybkich 3×). Szybkie mrugnięcia blisko siebie są liczone; szum odcina `CZAS_MIN_MRUG_MS` (za krótkie zamknięcie) oraz walidacja całej serii 3× (120–1300 ms).
 
-Impulsy krotsze niz `CZAS_MIN_MRUG_MS` (80 ms) sa odrzucane jako artefakty ruchu glowy —
-nie trafiaja do licznika serii ani do dragu.
+| Mrugnięcia | Akcja |
+|------------|--------|
+| 1 | **LPM** |
+| 2 | **Double-click LPM** — w scrollu: **scroll OFF** (tylko wyjście) |
+| 3 | **PPM** |
+| 4 | **Scroll ON** (tylko gdy scroll wyłączony) |
+| 5 | **Rekalibracja** MPU + TCRT (~3 s, async) |
+| 6 | **Przełącznik trybu debug** (`czyDebugWlaczony`) — Serial + szczegółowe logi w WebDebug; domyślnie **wyłączony** |
+| Oko zamknięte &gt; `PROG_PRZYTRZYMANIA_MS` (850 ms) | **Drag** (LPM trzymany) |
 
-Akcje 4-6 dzialaja zawsze; klikniecia 1-3 sa zablokowane w trybie scrolla zeby przypadkowe
-mrugniecie nie generowalo klikow podczas przewijania. Drag & drop tez jest wylaczony w trybie scrolla.
+- Impulsy &lt; `CZAS_MIN_MRUG_MS` (42 ms) — odrzucone.  
+- Zamknięcie **280–850 ms** — nie liczy się jako mrugnięcie (strefa przed dragiem); **&gt; 850 ms** → drag. Krótkie mrugnięcia &lt; 280 ms — jak dotąd.  
+- **Scroll:** włączenie **4×**; wyłączenie przy **każdym mrugnięciu ≥2** (2× tylko OFF, 3× OFF + PPM). Mniej czuły scroll: `DZIELNIK_SCROLLA` 7, `PROG_ZYRO_SKROL_DEG_S` 3.0.  
+- W trybie scrolla 1× zablokowane; drag wyłączony.
 
-### Tryb scrolla
+### Komunikacja HID
 
-W trybie scrolla pochylanie glowy gora/dol steruje kolkiem myszy zamiast kursorem.
-Ruch lewo/prawo jest ignorowany. Predkosc reguluje `DZIELNIK_SCROLLA`.
+| Tryb | Kiedy | Co działa |
+|------|--------|-----------|
+| **USB** | Kabel USB-C, host widzi urządzenie (`tud_mounted`) | Mysz HID + **klawiatura HID** (skróty, gest OSK) |
+| **BLE** | **Brak USB-HID** u hosta (typowo praca na ogniwie) | Mysz BLE — **reklama ON od startu** (także w kalibracji); po **5 min** bez ruchu — **uśpienie**; budzenie ruchem / mrugnięciem |
 
-### Komunikacja
+**Docelowy tryb:** ogniwo + **sparowanie BLE** — nie trzeba podłączać USB do użytkowania. Kabel USB = opcjonalnie (ładowanie, programowanie, USB-HID + klawiatura gestu). Priorytet: gdy host widzi **USB-HID**, reklama BLE jest wyłączona; po rozłączeniu od PC — BLE wraca. Mrugająca LED = **brak połączenia myszy** (sparuj BLE), nie „podłącz USB”.
 
-- **USB HID** - priorytet, niskie opoznienia, kabel USB-C.
-- **Bluetooth Low Energy (BLE) HID** - tryb bezprzewodowy, automatyczne polaczenie po
-  sparowaniu z systemem operacyjnym.
-- Pelna kompatybilnosc z Windows / macOS / Linux / Android - sterownik HID jest natywny.
+**Poziom baterii w %:** firmware **nie mierzy** — na XIAO ESP32-S3 (Plus) **nie ma** podłączenia BAT+ do ADC w MCU (potwierdza [wiki Seeed – Battery Usage](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)). Ładowanie obsługuje **osobny układ** na płytce (czerwona LED).
 
 ---
 
-## Sprzet i piny (Seeed XIAO ESP32-S3 Plus)
+## Sprzęt i piny (XIAO ESP32-S3 Plus)
 
-| Pin na plytce | GPIO | Funkcja na ESP32-S3 | Podlaczenie                                  |
-|---------------|------|---------------------|----------------------------------------------|
-| `D1` / `A1`   | 2    | ADC1_CH1            | **AO** (wyjscie analogowe) modulu TCRT5000   |
-| `D4`          | 5    | I2C SDA             | **SDA** czujnika MPU6050                     |
-| `D5`          | 6    | I2C SCL             | **SCL** czujnika MPU6050                     |
-| `D16` (back)  | 10   | ADC1_CH9 / ADC_BAT  | Wewnetrzny dzielnik **1:11** (R9=100K + R8=10K) do **BAT+** (monitor baterii) |
-| `LED_BUILTIN` | 21   | -                   | Dioda wbudowana (status / klikniecia)        |
-| `BAT+ / BAT-` | -    | -                   | **Akyga Li-Pol 1900 mAh 1S 3,7 V** — tylko piny **+** i **−** (patrz ponizej) |
-| `USB-C`       | -    | USB Serial / HID    | Zasilanie + programowanie + komunikacja      |
-
-**TCRT5000:** zasilanie 3.3 V, wykorzystywane wyjscie **AO** (analogowe). Wyjscie DO/D0
-z komparatorem LM393 jest zostawione niepodlaczone - obrabiamy caly sygnal programowo.
-
-**MPU6050:** zasilanie 3.3 V, I2C @ 400 kHz (Fast Mode). Adres 0x68.
-
-**Bateria:** ogniwo **Akyga Li-Pol 1S 3,7 V nominalnie, 1900 mAh**,
-wymiary ok. **50 × 34 × 9,5 mm**, wylot **JST 3-pin** na kabelu. W projekcie HEFAS uzywamy
-**wylacznie dwoch pinow: + (BAT+) i − (BAT−)** podlaczonych do padów **BAT+ / BAT−** na spodzie
-XIAO ESP32-S3 Plus. **Srodkowy pin JST (NTC, termistor BMS)** pozostaje **niepodlaczony**.
-
-Zakres roboczy napiecia ogniwa: ok. **3,0–4,2 V** (nominalnie 3,7 V). Ladowanie przez USB-C (PMIC SGM40567, ok. 110 mA).
+| Pin | GPIO | Funkcja |
+|-----|------|---------|
+| D1 / A1 | 2 | TCRT5000 **AO** |
+| D4 / D5 | 5 / 6 | MPU6050 **I2C** @ 400 kHz |
+| LED_BUILTIN | 21 | Status |
+| BAT+ / BAT− | — | Ogniwo 1S (ładowanie z USB; **NTC z JST niepodłączać**) |
+| USB-C | — | Zasilanie, programowanie, USB HID |
 
 ---
 
@@ -104,346 +85,302 @@ Zakres roboczy napiecia ogniwa: ok. **3,0–4,2 V** (nominalnie 3,7 V). Ladowani
 
 ```
 HEFAS 4.0/
-├── platformio.ini              PlatformIO: board seeed_xiao_esp32s3, USB HID + CDC,
-│                               lib: ESP32-BLE-Mouse, MPU6050
+├── platformio.ini          seeed_xiao_esp32s3, USB HID+CDC, BLE-Mouse, MPU6050
 ├── include/
-│   ├── hefas_config.h          Wszystkie stale (piny, czulosc, progi, parametry)
-│   └── hefas_webdebug.h        Naglowek modulu diagnostyki WiFi (opcjonalny)
+│   ├── hefas_config.h      Stałe strojenia
+│   └── hefas_webdebug.h    WiFi AP, maski logów (WEBLOG_*)
 ├── src/
-│   ├── main.cpp                Pelna logika systemu (IMU, TCRT, USB / BLE, bateria)
-│   └── hefas_webdebug.cpp      Modul WebDebug (WiFi AP + WebServer + panel HTML)
-└── README.md                   Ten plik
+│   ├── main.cpp            IMU, TCRT, mrugnięcia, gest, USB/BLE
+│   └── hefas_webdebug.cpp  Panel 192.168.4.1
+└── README.md
 ```
 
-**PlatformIO (`platformio.ini`):** `ARDUINO_USB_MODE=1` i `ARDUINO_USB_CDC_ON_BOOT=1` wlaczaja
-natywny USB HID oraz port Serial przez USB-C. Monitor: 115200 baud.
+**PlatformIO:** `ARDUINO_USB_MODE=1`, `ARDUINO_USB_CDC_ON_BOOT=1` — natywny USB (mysz + klawiatura + Serial CDC).
 
 ---
 
 ## Uruchomienie
 
-1. Podlacz MPU6050: SDA -> D4, SCL -> D5, VCC -> 3V3, GND -> GND.
-2. Podlacz TCRT5000: AO -> D1/A1, VCC -> 3V3, GND -> GND. (DO i regulator progu nieuzywane.)
-3. (Opcjonalnie) Podlacz ogniwo **Akyga 1900 mAh 1S 3,7 V** do padów **BAT+** i **BAT−**
-   na spodzie XIAO — **tylko plus i minus**, srodkowy pin **NTC** z wtyczki JST **pominij**
-   (nie lutuj, nie wciskaj do zlacza). **Uwaga na polaryzacje!**
-4. Podlacz XIAO ESP32-S3 Plus przez USB-C do komputera.
-5. Otworz projekt w PlatformIO (VSCode).
-6. Zbuduj i wgraj: `pio run -t upload` lub **Ctrl+Alt+U**.
-7. Po starcie poloz plytke nieruchomo i trzymaj otwarte oko na czujniku TCRT.
-   Kalibracja przebiega w **dwoch fazach** (LED swieci/miga inaczej):
-   - **Faza 1 (~2 s, LED swieci CIAGLE):** rownolegly pomiar 200 probek zyroskopu
-     i TCRT. Obliczane sa offsety biasu zyroskopu i wstepny baseline (trimmed-mean 80%).
-   - **Faza 2 (~1 s, LED MIGA WOLNO):** filtr EMA przebiega ze stabilna dioda IR.
-     Kompensuje dryf termiczny diody przez pierwsze 1-2 s po wlaczeniu (~30-60 ADC).
-     Baseline koncowy = tcrtFiltered po stabilizacji — dokladniejszy niz "zimna" srednia.
-8. Dioda mrugnie 3x = system gotowy do pracy (laczny czas kalibracji ~3 s).
+1. MPU6050: SDA→D4, SCL→D5, 3V3, GND.  
+2. TCRT5000: AO→A1, 3V3, GND (DO/LM393 nieużywane).  
+3. Opcjonalnie ogniwo na BAT+ / BAT− (tylko +/−).  
+4. `pio run -t upload`  
+5. Przy starcie: nieruchomo, oko otwarte na TCRT ~3 s (kalibracja async, LED).  
+6. 3× mrugnięcie LED = gotowość.
 
-System automatycznie wybiera tryb komunikacji:
-- jest USB i host enumerowal urzadzenie -> **USB HID** (priorytet),
-- inaczej -> **BLE HID** (paruj z systemem operacyjnym jako "HEFAS 4.0").
+**Parowanie BLE (główna ścieżka):** w telefonie/PC włącz Bluetooth, szukaj **„HEFAS 4.0”** (reklama startuje po włączeniu urządzenia, bez czekania na USB). Słabe/rozładowane ogniwo może nie wystartować — to ograniczenie zasilania, nie wymóg kabla USB. Jeśli panel pokazuje **SLEEP**, porusz głową lub mrugnij.
 
 ---
 
-## Strojenie parametrow
+## Strojenie (`include/hefas_config.h`)
 
-Wszystkie parametry w `include/hefas_config.h`. Najwazniejsze do regulacji pod uzytkownika:
+### Ruch
 
-### Czulosc ruchu
+| Parametr | Domyślnie | Opis |
+|----------|-----------|------|
+| `CZULOSC_MYSZY` | 0.4 | Czułość kursora |
+| `STREFA_MARTWA` | 2.0 °/s | Martwa strefa |
+| `PROG_ZYROSKOPU` | 1.5 °/s | Filtr szumu |
 
-| Parametr            | Domyslna | Opis                                                  |
-|---------------------|----------|-------------------------------------------------------|
-| `CZULOSC_MYSZY`     | 0.4      | Predkosc kursora. 0.2 = wolno (precyzyjnie), 1.0 = szybko |
-| `CZULOSC_ZYRO_LSB`  | 131.0    | Przelicznik surowego Gx/Gz MPU6050 na °/s (±250°/s)   |
-| `STREFA_MARTWA`     | 2.0 °/s  | Dead zone - zapobiega dryfowi przy nieruchomej glowie |
-| `PROG_ZYROSKOPU`    | 1.5 °/s  | Prog szumu zyroskopu (pierwszy filtr)                 |
-| `ODWROC_OS_X`       | 1        | Kierunek osi X z Gx (+1 lub -1, gdy montaz odwrotny)  |
-| `ODWROC_OS_Y`       | 1        | Kierunek osi Y z Gz (+1 lub -1)                        |
+### Mrugnięcia
 
-### Detekcja mrugniec
+| Parametr | Domyślnie | Opis |
+|----------|-----------|------|
+| `OKNO_MIEDZY_IMPULSAMI_MS` | 600 | Max. przerwa między otwarciami w serii |
+| `SERIA_CISZA_PO_1_MS` … `_6_MS` | 350…1000 | Cisza po ostatnim impulsie (zależnie od N) |
+| `CZAS_REFRAKTORY_PO_IMPULSIE_MS` | 0 | Wyłączone — nie blokuje kolejnych zamknięć po impulsie |
+| `SERIA_CZAS_MIN_3_MS` / `MAX_3` | 120 / 1300 | Walidacja czasu serii 3× |
+| `SERIA_CZAS_MAX_4_MS` … `_6_MS` | 1900 / 2500 / 3100 | Max. czas serii 4×–6× |
+| `PROG_PRZYTRZYMANIA_MS` | 850 | Drag |
+| `CZAS_MIN_MRUG_MS` | 42 | Min. czas impulsu |
+| `CZAS_MAX_MRUG_MS` | 280 | Powyżej → strefa drag |
+| `DZIELNIK_SCROLLA` | 7 | Scroll wolniejszy |
+| `PROG_ZYRO_SKROL_DEG_S` | 3.0 | Wyższy próg ruchu w scrollu |
 
-| Parametr                  | Domyslna | Opis                                                |
-|---------------------------|----------|-----------------------------------------------------|
-| `OKNO_WIELOKLIKU_MS`      | 400 ms   | Max przerwa miedzy mrugnieciami w serii             |
-| `PROG_PRZYTRZYMANIA_MS`   | 500 ms   | Po tym czasie zamkniete oko -> wchodzi w drag       |
-| `CZAS_DEBOUNCE_MS`        | 30 ms    | Eliminacja drgan progu                              |
-| `CZAS_MIN_MRUG_MS`        | 80 ms    | Min. czas zamknietego oka liczony jako mrugnięcie — ruchy glowy generuja krotkie (<80 ms) artefakty, ten prog je odrzuca. Prawdziwe mrugniecia trwaja 100-400 ms. |
-| `CZAS_KROTKIEGO_KLIKU_MS` | 80 ms    | Czas press/release wysylanego do HID                |
-| `CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS` | 60 ms | Odstep release->press w double-click          |
+### TCRT
 
-**WAZNE:** `PROG_PRZYTRZYMANIA_MS` musi byc wyraznie wiekszy od `OKNO_WIELOKLIKU_MS`,
-inaczej dlugie pojedyncze mrugniecie wpadnie w drag zamiast byc zliczone jako LPM. Zapas
-zalecany min. 100 ms.
+| Parametr | Domyślnie |
+|----------|-----------|
+| `EMA_ALPHA_SZYBKI` | 0.50 |
+| `EMA_ALPHA_WOLNY` | 0.003 |
+| `OFFSET_TRIGGER` / `RELEASE` | 320 / 140 |
 
-### Detektor analogowy TCRT5000
+### Gest Gy
 
-| Parametr             | Domyslna | Opis                                                   |
-|----------------------|----------|--------------------------------------------------------|
-| `PIN_TCRT_ANALOG`    | A1       | Pin ADC dla AO TCRT5000                                |
-| `PROBKI_TCRT_KALIBRACJI` | 200  | Liczba probek startowych do wyznaczenia baseline       |
-| `EMA_ALPHA`          | 0.20     | Szybki EMA: wygladzanie szumu ADC (wieksze = szybsza reakcja, wiecej szumu) |
-| `EMA_ALPHA_WOLNY`    | 0.005    | Wolny EMA: adaptacyjny baseline (~2 s stala czasowa @100 Hz). Zastapil TRACKING_ALPHA + TIMEOUT_TRACKING_MS. |
-| `OFFSET_TRIGGER`     | 350      | Spadek ADC ponizej baseline = wykryto zamkniecie oka   |
-| `OFFSET_RELEASE`     | 120      | Powrot powyzej baseline-OFFSET_RELEASE = otwarcie oka  |
-| `OFFSET_MAX_ZWARCIA` | 800      | Jesli sygnal spada glebiej niz to, ignorujemy (zdjecie okularow itp.) |
+| Parametr | Domyślnie |
+|----------|-----------|
+| `GEST_GY_PROG_DEG_S` | 40 |
+| `GEST_GY_CZAS_TRWANIA_MS` | 280 |
+| `GEST_COOLDOWN_MS` | 2200 |
+| `ODWROC_GEST_GY` | -1 (prawo przy tym montażu) |
 
-### Monitor baterii
+### BLE
 
-| Parametr                   | Domyslna | Opis                                                |
-|----------------------------|----------|-----------------------------------------------------|
-| `PIN_ADC_BATERIA`          | 10 (D16) | GPIO10 = ADC1_CH9 = ADC_BAT na XIAO Plus            |
-| `DZIELNIK_BATERII`         | **11.0** | R9=100K + R8=10K → 1:11. Skalibruj wg multimetru jesli odchylka > 0.1 V. |
-| `PROBKI_BATERII`           | **64**   | Usrednianie 64 probek analogReadMilliVolts()        |
-| `OKRES_POMIARU_BATERII_MS` | **3000 ms** | Co ile pobierany jest pomiar                     |
-| `V_BATERIA_BRAK_PROG`      | **2.5 V** | Ponizej tego → ogniwo niepodlaczone lub blad +/−   |
-| `V_BATERIA_PELNA / PUSTA`  | 4,2 / 3,2 V | Granice dla ogniwa Akyga 1S 3,7 V (3,0–4,2 V roboczo) |
-
-### Inne
-
-| Parametr            | Domyslna | Opis                                              |
-|---------------------|----------|---------------------------------------------------|
-| `DZIELNIK_SCROLLA`  | 4        | Predkosc scrollowania (wieksze = wolniej)         |
-| `CZAS_BLYSKU_LED_MS`| 60 ms    | Krotki blysk diody po kliknieciu (poza scroll/drag) |
-| `OKRES_PETLI_MS`    | 10 ms    | Czestotliwosc petli glownej (100 Hz)              |
-| `OKRES_DIAGNOSTYKI_MS` | 500 ms | Czestotliwosc wypisywania logow diagnostycznych  |
-| `PROBKI_KALIBRACJI` | 200      | Liczba probek kalibracji zyroskopu (start + rekal.) |
-| `WEBDEBUG_AKTYWNY`  | true     | WiFi AP + panel 192.168.4.1 (false = modul wylaczony) |
-| `WEBDEBUG_SSID`     | HEFAS-Debug | Nazwa sieci diagnostycznej                     |
-| `WEBDEBUG_HASLO`    | hefas1234 | Haslo AP WebDebug                                 |
+| Parametr | Domyślnie | Opis |
+|----------|-----------|------|
+| `CZAS_BEZCZYNNOSCI_BLE_MS` | 5 min | Po tym czasie bez aktywności — reklama BLE OFF |
+| `PROG_PROBUDZENIA_BLE_DEG_S` | 12 °/s | Ruch głowy (|Gx|+|Gy|) budzi reklamę ze snu |
 
 ---
 
-## Monitor baterii - dzialanie i kalibracja
+## Ogniwo, ładowanie i debug — USB ≠ ogniwo
 
-**Sprzet w projekcie:** Akyga Li-Pol **1900 mAh, 1S, 3,7 V**, JST 3-pin (50 × 34 × 9,5 mm).
-Podlaczenie: **BAT+ → pad BAT+**, **BAT− → pad BAT−** na XIAO; pin **NTC nieuzywany**.
+### Jak płytka ładuje ogniwo (bez ADC w ESP32)
 
-XIAO ESP32-S3 Plus ma na spodzie pin **D16** (sprzetowo GPIO10 = ADC1_CH9 = `ADC_BAT`)
-fabrycznie podlaczony przez **wewnetrzny dzielnik napiecia R9=100K / R8=10K (1:11)**
-do bieguna **BAT+** plytki (a stad do plusa ogniwa). Dzieki temu napiecie ~4,2 V zostaje
-zmniejszone do ok. **0,33–0,38 V** (mierzone na GPIO10 / D16, ADC_11db).
+Na XIAO ESP32-S3 jest **układ zarządzania zasilaniem i ładowania** (Li-ion/Li-Pol z USB). **ESP32 nie musi znać procentu** — charger sam kończy ładowanie po napięciu/prądzie. Sygnalizacja:
 
-### Lancuch pomiaru
+1. Bez ogniwa, USB → czerwona LED ~30 s, potem gaśnie.  
+2. Ogniwo + USB → LED **miga** (ładowanie).  
+3. Pełne → LED **zgaszona**.
 
-Po starcie firmware ustawia **ADC_11db** na GPIO10 **po** `kalibracjaSystemu()` i **ponownie po** `webDebugInit()`
-(start WiFi AP moze resetowac ustawienia ADC). Pin baterii (~330 mV) miesci sie w liniowym zakresie 11 dB.
+### Co pokazuje HEFAS (bez pomiaru napięcia)
 
-1. `analogReadMilliVolts(10)` × **64** probek, **trimmed-mean** (odrzut 10% skrajnych) → `pin` **[mV na GPIO10]**.
-   W logu rownolegle `raw=` (12-bit ADC) do diagnostyki.
-2. `V_pin = pin / 1000.0` → napiecie na pinie po dzielniku [V].
-3. `V_bat = V_pin × DZIELNIK_BATERII` (**11.0**) → napiecie ogniwa Akyga [V].
-4. Mapowanie na procent przez **8-punktowa krzywa rozładowania Li-Pol 1S**:
+| Kropka / pole | Znaczenie |
+|---------------|-----------|
+| **HID** | Host widzi mysz USB-HID (`tud_mounted()`) |
+| **USB** | Kabel / 5 V (`tud_connected()` lub opcjonalnie `PIN_VBUS_ADC`) |
+| **Ogn.** | Ogniwo na BAT+ (montaż — `HEFAS_OGNIOWO_ZAMONTOWANE`) |
+| **Ład.** | Ogniwo + USB jednocześnie (ładowanie) |
+| **BLE** (kropka) | Brak USB-HID → mysz po Bluetooth |
+| **Zasil.** (panel) | Np. `Ogniwo + USB + ładowanie` lub `Ogniwo + mysz→BLE` |
 
-   | Napięcie | Procent |
-   |----------|---------|
-   | 4,20 V   | 100%    |
-   | 4,10 V   | 90%     |
-   | 4,00 V   | 80%     |
-   | 3,85 V   | 60%     |
-   | 3,75 V   | 40%     |
-   | 3,65 V   | 20%     |
-   | 3,50 V   | 10%     |
-   | 3,30 V   | 0%      |
+**Częste mylenie:** kabel USB do ładowania ≠ mysz USB-HID (kropka USB może być zgaszona).  
+Kropka **BLE** ≠ „naładowane” — tylko tryb bezprzewodowy. Rozładowane ogniwo = brak zasilania MCU, nie komunikat „podłącz USB”.
 
-   Między punktami interpolacja liniowa. **Plateau 3,65–4,20 V** ≈ 80% pojemności —
-   procent długo trzyma się wysoko, potem szybko spada.
+- **BLE:** reklama od startu bez USB-HID; uśpienie po 5 min; budzenie ruchem / mrugnięciem.  
+- **Log `[ZAS]`** (filtr **Zasilanie**): przełączenie mysz BLE ↔ USB-HID.
 
-5. Pomiar działa **zawsze** — także przy podłączonym USB. Przy ładowaniu napięcie może
-   być nieznacznie wyższe (~0,05 V); w logu dopisek `(USB)`.
-6. Poniżej `V_BATERIA_BRAK_PROG` (**2,5 V**) → **BRAK** (ogniwo odłączone, zła polaryzacja
-   lub plus podłączony przez pin NTC zamiast BAT+). Przy poprawnym ogniwie oczekuj **pin ≈ 300–380 mV**
-   i **Vbat ≈ 3,3–4,2 V**.
+**Montaż ogniwa:** BAT+ / BAT− na spodzie płytki; **NTC z 3-pinowego JST nie lutować**.
 
-### Wyswietlanie poziomu baterii na podlaczonych urzadzeniach
-
-W **trybie BLE** stan baterii jest wystawiany jako **standardowy BLE Battery Service**
-(UUID `0x180F`, charakterystyka Battery Level `0x2A19`). System operacyjny pokazuje
-go w panelu Bluetooth obok nazwy urzadzenia `HEFAS 4.0`:
-
-- **Windows 10/11** - Settings -> Bluetooth & devices -> wybrane u"Batterrzadzenie -> procent obok ikonki.
-- **macOS** - Pasek menu Bluetooth -> rozwiniecie urzadzenia -> y Level".
-- **iOS / iPadOS** - Ustawienia -> Bluetooth -> "i" obok urzadzenia.
-- **Android** - Ustawienia -> Polaczone urzadzenia -> wybrane urzadzenie (status bar nie zawsze, sekcja Bluetooth tak).
-
-Aktualizacja BAS odbywa sie **tylko gdy procent realnie sie zmieni** (nie co 2 s jak
-sam pomiar), zeby nie zasmiecac BLE niepotrzebnymi notyfikacjami. Log w Serial:
-`[BLE] Battery Service = 82%`.
-
-W **trybie USB** host nie zobaczy poziomu baterii - standard USB HID Mouse nie ma
-mechanizmu raportowania baterii. Apple Magic Mouse i niektore Logitechy pokazuja to
-w panelu systemowym przez wlasne sterowniki, ale jest to poza standardem HID i wymaga
-firmware z osobna klasa USB - co byloby duzo pracy dla bardzo niskiej wartosci (na
-USB plytka i tak jest podpieta do zasilania kablem). Stan baterii w trybie USB
-ogladasz w panelu **WebDebug** (`192.168.4.1`).
-
-### Kalibracja dzielnika (jednorazowa)
-
-Schemat XIAO Plus: R9=100K + R8=10K → podzial **1:11** (nominalnie). Tolerancja
-rezystorow +/-1% daje odchylenie do ~0.1 V od rzeczywistego napiecia. Jak sprawdzic:
-
-1. Wgraj firmware, podłącz ogniwo Akyga (+/− na BAT+/BAT−).
-2. Połącz się z `HEFAS-Debug` WiFi, otwórz `192.168.4.1` (USB może być podpięty).
-3. W logach WebDebug co ~3 s szukaj: `[BAT] raw=1234 pin=382mV Vbat=4.20V [95%]` lub `... BRAK`.
-4. Zmierz multimetrem napięcie między padami **BAT+** i **BAT−** na XIAO.
-5. Jeśli różnica > 0,05 V, popraw (użyj `pin` z logu w mV):
-   ```
-   DZIELNIK_BATERII = V_multimetr / (pin_mV / 1000.0)
-   ```
-   Przykład: multimetr 4,15 V, log `pin=370mV` → `DZIELNIK = 4.15 / 0.370 ≈ 11.22`
-6. Wpisz nową wartość w `hefas_config.h` i wgraj ponownie.
-
-### Zlacze JST 3-pin (Akyga) — co podlaczyc
-
-Wtyczka na kablu ogniwa ma **3 piny** (typowo: **+ | NTC | −**). W HEFAS:
-
-| Pin JST | Podlaczenie w projekcie |
-|---------|-------------------------|
-| **+**   | Pad **BAT+** na spodzie XIAO |
-| **NTC** | **Nic** — zostaw odizolowany / nieuzywany |
-| **−**   | Pad **BAT−** na spodzie XIAO |
-
-**Nie** podlaczaj plusa przez pin NTC — termistor w linii BAT+ zaniża odczyt ADC
-(symptom: WebDebug pokazuje ~1,5–2,2 V zamiast ~4,1 V przy naladowanym ogniwie).
+**Chcesz % w przyszłości:** zewnętrzny dzielnik napięcia na wolny pin ADC (np. D0) — patrz [FAQ Seeed – battery voltage](https://wiki.seeedstudio.com/check_battery_voltage/) (dla innych modeli XIAO; idea ta sama).
 
 ---
 
-## Diagnostyka przez WiFi (WebDebug)
+## WebDebug (WiFi AP)
 
-ESP32 stawia wlasna siec WiFi i serwuje panel diagnostyczny w przegladarce.
-**Nie wymaga internetu, routera ani dodatkowego sprzetu.**
+Panel diagnostyczny działa **zawsze**, gdy `WEBDEBUG_AKTYWNY true` (niezależnie od flagi Debug). Sieć: **`HEFAS-Debug`**, hasło **`hefas1234`**, **`http://192.168.4.1`**.
 
-### Jak wejsc na panel:
+### Kropki statusu (góra)
 
-1. Wgraj firmware na plytke.
-2. Na telefonie lub laptopie wejdz w **ustawienia WiFi**.
-3. Polacz sie z siecia **`HEFAS-Debug`** (haslo: **`hefas1234`**).
-4. Otworz przegladarke (Chrome, Safari, Firefox).
-5. Wpisz adres: **`192.168.4.1`** i wcisnij Enter.
+| Kropka | Znaczenie |
+|--------|-----------|
+| **HID** | Host widzi mysz USB-HID (`tud_mounted`) |
+| **USB** | Kabel / 5 V (`tud_connected()` lub opcjonalnie `PIN_VBUS_ADC`) |
+| **Ogn.** | Ogniwo na BAT+ (`HEFAS_OGNIOWO_ZAMONTOWANE`) |
+| **Ład.** | Ogniwo + USB (ładowanie) |
+| **Scroll** | Tryb scrolla (ruch głowy = przewijanie) |
+| **Drag** | Przytrzymanie LPM (drag) |
+| **Pauza** | Blokada wysyłania ruchu/klików (przycisk PAUZA) |
+| **Debug** | `czyDebugWlaczony` — domyślnie **OFF**; **6× mrugnięcie** = przełącznik |
+| **Oko** | Oko **potwierdzone** (liczy się do serii) |
+| **BLE** | Brak USB-HID → mysz po Bluetooth |
+| **Kal.** | Trwa rekalibracja MPU + TCRT (~3 s) |
 
-### Co jest na panelu:
+### Panel boczny (liczby na żywo)
 
-**Naglowek - kropki statusu (na zywo, co 160 ms):**
+| Pole | Znaczenie |
+|------|-----------|
+| **L / R** | Liczniki kliknięć lewych / prawych (HID) |
+| **dX / dY** | Ostatnia delta kursora |
+| **SERIA** | Licznik impulsów w bieżącej serii mrugnięć |
+| **cisza** | Pozostały czas do commitu akcji (zależy od N: 350…1000 ms) |
+| **T** | Czas całej serii od 1. do ostatniego impulsu |
+| **przerwa** | Ostatnia przerwa między otwarciami |
+| **Kal.** | `TRWA ~3s` podczas kalibracji, inaczej `—` |
+| **R / Fs / B** | TCRT: surowy ADC / fast (progi) / baseline |
+| **V:Z / V:O, POTW** | Surowy stan progu / potwierdzenie zamknięcia |
+| **Zasil.** | Skład: Ogniwo, USB-HID, USB, ładowanie, mysz→BLE |
+| **BLE** | ON / SLEEP / OFF |
 
-| Kropka  | Znaczenie                                                  |
-|---------|------------------------------------------------------------|
-| USB     | mysz HID widoczna po USB-C; zgaszone = aktywne BLE         |
-| Scroll  | wlaczony tryb scrolla                                      |
-| Drag    | trwa przytrzymanie LPM (drag & drop)                       |
-| Pauza   | mysz spauzowana przyciskiem ponizej                        |
-| Debug   | aktywne logowanie na Serial (mocniej grzeje)               |
-| Oko     | detektor TCRT widzi zamkniete oko (czerwona)               |
-| BAT     | ogniwo Akyga — zielona > 40%, zolta 20–40%, czerwona < 20%; szara = BRAK (< 2,5 V) |
+### Wykresy
 
-**Lewy panel - dane numeryczne:**
+- **Ruch głowy** — dX (czerwony), dY (cyjan); joystick = wektor chwilowy.
+- **TCRT** — `tcrtFast` (progi); szare/czerwone/żółte linie = baseline / trigger / release; czerwone tło = oko potwierdzone zamknięte.
 
-- Schematyczna mysz SVG (blyska LPM/PPM, kolko swieci w trybie scrolla)
-- Joystick - chwilowy wektor ruchu glowy
-- Liczniki **L** / **R** - ile LPM/PPM wykonano od startu
-- **dX** / **dY** - aktualne delty HID (~piksele na 10 ms)
-- **SERIA** - ile mrugniec w trwajacej serii (zolta), czas od ostatniego mrugniecia,
-  okno timeoutu - widoczne na zywo zliczanie mrugniec
-- **TCRT R / F / B** - surowy ADC / po filtrze / baseline
-- **BAT** — napięcie ogniwa [V], procent, `pin` [mV] na GPIO10 (do kalibracji dzielnika)
+### Logi tekstowe (filtry)
 
-**Wykres ruchu glowy (gorny):**
+Domyślnie włączone: **Mrugnięcia** (`WEBLOG_FSM`) + **Zasilanie** (`WEBLOG_BAT`). Opcjonalnie: Żyroskop, Czujnik IR, BLE/USB.
 
-- Linia **czerwona** = predkosc kursora X (lewo/prawo)
-- Linia **cyjan** = predkosc kursora Y (gora/dol)
-- Skala automatyczna, pokazana w rogach
-- Historia ostatnich 32 sekund
+| Gdy **Debug OFF** (domyślnie) | Gdy **Debug ON** (6× mrugnięcie) |
+|-------------------------------|----------------------------------|
+| `[KAL] …` start/stabilizacja/gotowe (także z 5× mrugnięć) | + `[SERIA]`, `[KLIK]`, `[SCROLL]`, `[GEST]`, artefakty TCRT |
+| `[DEBUG] WYLACZONY` / `WLACZONY` przy 6× | `[ZAS]`, `[TCRT]` okresowy, `[RUCH]` — według zaznaczonych filtrów |
+| `[ZAS]` — jeśli filtr Zasilanie | Serial Monitor (115200) — pełne tagi |
 
-**Wykres sygnalu TCRT (dolny):**
+**Kalibracja:** 5× mrugnięcie lub przycisk **REKALIBRACJA** → kropka **Kal.**, wpisy `[KAL] Start (5 mrug)` … `[KAL] Gotowe` (widoczne bez włączania Debug).
 
-- Linia **cyjan** = `tcrtFiltered` (sygnal po filtracji EMA)
-- Pozioma **szara kreskowana** = baseline (oko otwarte)
-- Pozioma **czerwona kreskowana** = prog TRIGGER (zamkniecie oka)
-- Pozioma **zolta kreskowana** = prog RELEASE (otwarcie oka)
-- **Czerwone tlo** = chwile w ktorych wykryto zamkniete oko
-- Niesamowicie pomocne przy strojeniu progow TCRT - widzisz na zywo czy mrugniecia
-  zanurkowuja wystarczajaco glęboko ponizej czerwonej linii.
+### Przyciski
 
-**Logi na zywo** - tekstowe komunikaty z `Serial.println` (ostatnie 80 wpisow).
+- **PAUZA / WZNÓW** — blokuje ruch i kliknięcia (logika mrugnięć dalej działa).
+- **REKALIBRACJA** — kalibracja MPU + TCRT (~3 s, async).
+- **WYCZYŚĆ** — czyści historię logów w przeglądarce.
 
-**Przyciski:**
-
-- **PAUZA / WZNOW** - blokuje wysylanie ruchu i klikniec (logika dalej dziala, ale nic
-  nie idzie do hosta - bezpieczny debug bez szalonego kursora).
-- **REKALIBRACJA** - uruchamia `kalibracjaZyroskopu()` zdalnie (tylko offsety Gx/Gy/Gz, bez ponownego baseline TCRT).
-- **WYCZYSC** - czysci historie logow w panelu.
-
-**Legenda** - rozwijana sekcja "Legenda - jak czytac panel" z pelnym opisem kazdego
-elementu, przelicznikami jednostek (1 dX ≈ 1 piksel, 1 ADC ≈ 0.8 mV itd.) oraz
-wzorami matematycznymi calej obrobki sygnalu.
-
-### Wylaczanie modulu WiFi
-
-Jesli WebDebug nie jest potrzebny (np. produkcyjne wdrozenie, oszczednosc energii),
-w `include/hefas_config.h` ustaw `WEBDEBUG_AKTYWNY` na `false` (domyslnie `true`):
-```c
-#define WEBDEBUG_AKTYWNY    false
-```
-Modul sie nie skompiluje - zero wplywu na reszte kodu, zero zuzycia RAM / WiFi /
-prądu radia.
+Wyłączenie całego AP: `WEBDEBUG_AKTYWNY false` w `hefas_config.h`.
 
 ---
 
-## Diagnostyka przez Serial Monitor
+## Serial Monitor (115200)
 
-Domyslnie logowanie na Serial jest **wylaczone** - aktywujesz je **6 mrugnieciami**
-(toggle `czyDebugWlaczony`). Powod: WiFi i intensywne `Serial.print` zauwazalnie nagrzewaja
-chip ESP32-S3. Mozesz tez wlaczyc na stale w kodzie:
-```cpp
-bool czyDebugWlaczony = true;
+Domyślnie **`czyDebugWlaczony = false`** — po starcie Serial jest cichy (mniej obciążenia CPU). **6× mrugnięcie** włącza/wyłącza szczegółowe logi; kropka **Debug** w WebDebug odzwierciedla stan.
+
+Przykładowe tagi (gdy Debug **ON**):
+
+- `[KAL]` — offsety Gx, Gy, Gz, baseline TCRT  
+- `[TCRT]` — Raw, Fast, Base, stan (co ~500 ms w `diagnostyka()`)  
+- `[SERIA]` — commit serii (T, przerwa)  
+- `[ZAS]` — zmiana trybu zasilania (filtr Zasilanie w WebDebug)  
+- `[GEST]` — Ctrl+Win+O (USB)  
+- `[RUCH]` / `[SCROLL]` / `[KLIK]` / `[DRAG]` / `[HID]` / `[BLE]`
+
+Wpisy trafiają też do WebDebug zgodnie z maską filtrów (szczegóły mrugnięć/klików w panelu głównie przy **Debug ON**; `[KAL]` zawsze w filtrze Mrugnięcia).
+
+---
+
+## Architektura
+
+Firmware działa **w pełni asynchronicznie** (`millis()`, bez `delay()` poza końcem iteracji). Kolejka HID obsługuje do 4 zadań kliknięć.
+
+### Pętla główna (`loop()` @ 100 Hz)
+
+```mermaid
+flowchart TD
+    START([Iteracja loop]) --> WEB[webDebugLoop]
+    WEB --> REKAL{webZadanieRekalibracji?}
+    REKAL -->|tak| RKAL[rozpocznijKalibracje WebDebug]
+    REKAL -->|nie| IMU
+    RKAL --> IMU[odczytajIMU — Gx,Gz → kursor; Gy → gest]
+    IMU --> GEST[obsluzGestPrzechylenia]
+    GEST --> GK[odswiezGestKlawiatury]
+    GK --> TCRT[aktualizujDetektorTCRT]
+    TCRT --> ZAS[odswiezSterowanieBle — USB/BLE + status zasilania]
+    ZAS --> KAL[odswiezKalibracje — async MPU+TCRT]
+    KAL --> HIDQ[odswiezHidKlikniecia — kolejka LPM/double]
+    HIDQ --> PAUZA{webPauzaMyszy?}
+    PAUZA -->|tak| LED
+    PAUZA -->|nie| KLIK[obsluzKlikniecia — serie mrugnięć]
+    KLIK --> RUCH{delty ≠ 0 i !hidKlikZajety?}
+    RUCH -->|tak| SEND[wyslijRuchMyszy — ruch lub scroll USB/BLE]
+    RUCH -->|nie| LED[odswiezLed]
+    SEND --> LED
+    LED --> DIAG[diagnostyka — tylko gdy Debug ON]
+    DIAG --> WAIT[delay OKRES_PETLI_MS = 10 ms]
+    WAIT --> START
 ```
 
-Po wlaczeniu Serial Monitor (115200 baud) wypisuje (co `OKRES_DIAGNOSTYKI_MS`, gdy debug ON):
+### Detektor TCRT5000 (`aktualizujDetektorTCRT`)
 
-- `[KAL]` / `[KALIBRACJA]` - offsety zyroskopu i baseline TCRT po starcie / rekalibracji
-- `[RUCH]` / `[SCROLL]` - dane ruchu (tylko gdy dX lub dY ≠ 0) + `[USB]` / `[BLE]`
-- `[TCRT] Raw=X Filt=Y Base=Z [OTW]` lub `[ZAMKN]` - stan detektora analogowego
-- `[TCRT] Artefakt odrzucony (Xms < min 80ms)` - zbyt krotki impuls (ruch glowy)
-- `[BAT] raw=N pin=382mV Vbat=4.20V [95%]` lub `... BRAK` — co 3 s w WebDebug; `(USB)` gdy kabel podpiety
-- `[BLE] Battery Service = Z%` - aktualizacja poziomu baterii w BLE (gdy sie zmieni)
-- `[KLIK] LEWY` / `DOUBLE LEWY` / `PRAWY` - wykryte klikniecia
-- `[DRAG] Przytrzymanie ON` / `OFF` - wcisniecie i puszczenie LPM (drag & drop)
-- `[SCROLL] ON` / `OFF` - przelaczanie trybu scrolla (4 mrugniecia)
-- `[REKALIBRACJA]` - start / gotowe (5 mrugniec lub przycisk WWW)
-- `[DEBUG] WLACZONY` / `WYLACZONY` - sekwencja 6 mrugniec
-
-Te same komunikaty trafiaja rownolegle do panelu WebDebug (bufor 80 wpisow).
-
----
-
-## Architektura wewnetrzna (skrot)
-
-```
-setup():
-  Serial / LED / I2C @ 400 kHz / MPU6050 init + testConnection
-  kalibracjaSystemu()              <- faza 1: rownolegla zyro+TCRT 200×10 ms (~2 s, LED ON)
-                                    faza 2: stabilizacja diody IR 100×10 ms (~1 s, LED miga)
-  initOdczytBaterii()             <- ADC_11db na GPIO10; ponownie po webDebugInit (WiFi)
-  USB HID + BLE HID begin
-  webDebugInit()                    <- WiFi AP (WEBDEBUG_SSID) + WebServer :80
-  mrugnijDioda(3)                   <- gotowosc (~3 s po starcie)
-
-loop() (co OKRES_PETLI_MS = 10 ms, ~100 Hz):
-  webDebugLoop()                    <- HTTP; opcjonalnie kalibracjaZyroskopu z /rekalibracja
-  odczytajIMU()                     <- Gx/Gz -> predkosc -> dX, dY (rate-control)
-  aktualizujDetektorTCRT()          <- ADC -> EMA -> histereza -> adaptacyjny baseline
-  odczytajPoziomBaterii()           <- co 3 s; 64× analogReadMilliVolts, krzywa Li-Pol, BLE BAS
-  [jesli !webPauzaMyszy]
-    obsluzKlikniecia()              <- debounce, seria mrugniec, drag
-    wyslijRuchMyszy(dX, dY)         <- USB (tud_mounted) priorytet, inaczej BLE
-  odswiezLed()                      <- ciagly ON w scroll/drag, krotki blysk po kliku
-  diagnostyka()                     <- co 500 ms na Serial + WebDebug (gdy debug ON)
+```mermaid
+flowchart TD
+    ADC[ADC 12-bit → tcrtRaw] --> FAST[EMA szybki → tcrtFast]
+    FAST --> FILT[EMA wolniejszy → tcrtFiltered]
+    FILT --> OPEN{Oko wirtualnie OTWARTE?}
+    OPEN -->|tak| TRIG{Fast &lt; Baseline − TRIGGER<br/>i &gt; Baseline − MAX_ZWARCIA?}
+    TRIG -->|tak| ZAM[wirtualnyStan = ZAMKNIĘTE]
+    TRIG -->|nie| BASE{Baseline nie zamrożony?}
+    BASE -->|tak| ADAPT[wolna adaptacja Baseline EMA]
+    BASE -->|nie| KONIEC([koniec])
+    ADAPT --> KONIEC
+    OPEN -->|nie| REL{Fast &gt; Baseline − RELEASE?}
+    REL -->|tak| OTW[wirtualnyStan = OTWARTE]
+    REL -->|nie| MECH{Fast &lt; Baseline − MAX_ZWARCIA?}
+    MECH -->|tak| RESET[zdarzenie mechaniczne → reset do OTWARTE]
+    MECH -->|nie| KONIEC
+    ZAM --> KONIEC
+    OTW --> KONIEC
+    RESET --> KONIEC
 ```
 
-Wszystko nieblokujace - `millis()` + flagi czasu zamiast `delay()`. Petla jest stabilnie
-przy 100 Hz, kalibracja startowa to jedyne miejsce z `delay`.
+Baseline jest **zamrożony** w trakcie serii mrugnięć, dragu i gdy oko zamknięte (`czyZamrozicBaselineTCRT`).
+
+### Mrugnięcia i akcje HID (`obsluzKlikniecia`)
+
+```mermaid
+flowchart TD
+    GOTOWY{systemGotowy?} -->|nie| KON([return])
+    GOTOWY -->|tak| PROBKI[Licz próbki 10 ms — otwarte / zamknięte]
+    PROBKI --> POTW{≥2 probki zamknięte<br/>i oko niepotwierdzone?}
+    POTW -->|tak| STARTI[czasStartImpulsu, okoPotwierdzone]
+    POTW -->|nie| OTWAR{≥N probek otwartych<br/>po potwierdzonym zamknięciu?}
+    OTWAR -->|tak| ZBOCZE[obsluzZboczeOtwarciaOka]
+    OTWAR -->|nie| DRAG{Oko zamknięte &gt; PROG_PRZYTRZYMANIA?}
+    ZBOCZE --> MIN{Czas impulsu ≥ MIN_MRUG?}
+    MIN -->|tak, nie drag| REJ[zarejestrujMrugniecie — OKNO, cisza po N]
+    MIN -->|nie| ODRZ[odrzuć artefakt]
+    DRAG -->|tak| DRAGON[przytrzymanieAktywne — LPM press]
+    STARTI --> TIME
+    REJ --> TIME
+    ODRZ --> TIME
+    DRAGON --> TIME
+    DRAG -->|nie| TIME[sprawdzTimeoutSerii]
+    TIME --> CISZA{Oko otwarte i minęła cisza po N?}
+    CISZA -->|tak| WALID{czas serii OK?}
+    WALID -->|tak| PROC[przetworzImpulsy: 1 LPM, 2 double, 3 PPM, 4 scroll, 5 kal, 6 debug]
+    WALID -->|nie| ODRZSER[odrzuć serię]
+    CISZA -->|nie| KON
+    PROC --> KON([koniec])
+    ODRZSER --> KON
+```
+
+### Uwagi względem uproszczonego schematu (np. z generatora AI)
+
+| Element w obcym schemacie | W HEFAS 4.0 |
+|---------------------------|-------------|
+| Odczyt napięcia baterii Li-Po | **Brak** — ESP32 nie mierzy %; są flagi USB-HID, kabel USB, ogniwo (montaż), ładowanie |
+| Debounce „czas od zmiany TCRT” | **N próbek × 10 ms** (2 normalnie, 5 przy końcu dragu) |
+| Gest Gy (Ctrl+Win+O) | Osobny blok w pętli, **nie** w ścieżce TCRT |
+| Kalibracja async | `odswiezKalibracje()` co iterację; start: boot, 5× mrug, WebDebug |
+| Pauza | Tylko blokuje `obsluzKlikniecia` + ruch; reszta pętli działa |
+| Debug (`czyDebugWlaczony`) | Domyślnie **OFF**; **6× mrugnięcie**; wpływa na Serial i szczegółowe logi |
+
+### Setup (skrót)
+
+```
+setup(): MPU6050 → kalibracja async → USB HID (mysz+klaw.) → webDebugInit() → BLE
+```
 
 ---
 
 ## Autorzy
 
-Bartlomiej Adamczyk, Sebastian Sobczyk
-Mechatronika - Szczecin 2026
+Bartłomiej Adamczyk, Sebastian Sobczyk  
+Mechatronika — Szczecin 2026

@@ -2,14 +2,6 @@
  * ============================================================
  *  HEFAS – Head-controlled Electronic Functional Assistive System
  * ============================================================
- *  Platforma:   Seeed Studio XIAO ESP32-S3 Plus
- *  Czujnik IMU: MPU6050 (6-DoF)
- *  Detektor:    TCRT5000 (wyjście analogowe AO → ADC, filtr EMA + histereza)
- *  Komunikacja: USB HID (priorytet) / Bluetooth Low Energy
- *
- *  Autorzy: Sebastian Sobczyk, Bartłomiej Adamczyk
- *  Kierunek: Mechatronika – Szczecin 2026
- * ============================================================
  */
 
 #include <Arduino.h>
@@ -17,139 +9,285 @@
 #include <algorithm>
 #include <MPU6050.h>
 #include <BleMouse.h>
+#if CONFIG_BT_ENABLED
+#include <BLEDevice.h>
+#endif
 
 #include "USB.h"
 #include "USBHIDMouse.h"
+#include "USBHIDKeyboard.h"
 
 #include "hefas_config.h"
 #include "hefas_webdebug.h"
 
-// Funkcja TinyUSB – zwraca true gdy host USB zakonczyl enumeracje
-// urzadzenia (kabel podpiety do komputera i system go rozpoznal).
 extern "C" bool tud_mounted(void);
+extern "C" bool tud_connected(void);
 
 // ======================== OBIEKTY GLOBALNE ==========================
 
-MPU6050            czujnikIMU;                              // Czujnik inercyjny 6-DoF (I2C)
-BleMouse           bleMysz("HEFAS 4.0", "HEFAS Team", 100); // Mysz BLE (nazwa, producent, bateria%)
-USBHIDMouse        usbMysz;                                // Mysz USB HID (natywny USB ESP32-S3)
+MPU6050            czujnikIMU;
+BleMouse           bleMysz("HEFAS 4.0", "HEFAS Team", 100);
+USBHIDMouse        usbMysz;
+USBHIDKeyboard     usbKlaw;
 
 // ===================== ZMIENNE KALIBRACJI ===========================
-// Offsety wyznaczane przy starcie przez usrednienie PROBKI_KALIBRACJI
-// odczytow zyroskopu w spoczynku. Odejmowane od kazdego kolejnego
-// odczytu, aby wyeliminowac staly blad systematyczny (bias).
 
 float offsetGx = 0.0f;
 float offsetGy = 0.0f;
 float offsetGz = 0.0f;
 
+float ostatniaPredkoscGx = 0.0f;
+float ostatniaPredkoscGy = 0.0f;
+float ostatniaPredkoscGz = 0.0f;
+
 // ==================== ZMIENNE RUCHU KURSORA =========================
-// Obliczone w odczytajIMU(), konsumowane w wyslijRuchMyszy().
-// Zakres: -127..127 (wymaganie protokolu HID).
 
 int kursorDeltaX = 0;
 int kursorDeltaY = 0;
 
-// Liczniki klikniec – odczytywane przez modul WebDebug.
 uint32_t licznikKlikLewych  = 0;
 uint32_t licznikKlikPrawych = 0;
 
-// =================== DEBOUNCE CZUJNIKA LM393 =======================
-// Programowa eliminacja drgan – ignorujemy zmiany stanu krotsze
-// niz CZAS_DEBOUNCE_MS. Dopiero po ustabilizowaniu przetwarzamy.
+// ================ ZLICZANIE MRUGNIĘĆ (seria impulsów) =================
 
-bool           poprzedniOdczytCzujnika = HIGH;   // Surowy odczyt z poprzedniej iteracji
-bool           ostatniStabilnyOdczyt   = HIGH;   // Stan po przejsciu debounce
-unsigned long  czasOstatniegoDebounce  = 0;      // Timestamp ostatniej zmiany surowego odczytu
+uint8_t        licznikImpulsow           = 0;
+unsigned long  czasOstatniegoImpulsu     = 0;
+unsigned long  czasStartImpulsu          = 0;
+unsigned long  deadlineKoniecSeriiMs      = 0;
+unsigned long  czasPierwszegoImpulsuSerii = 0;
+unsigned long  ostatniaPrzerwaMiedzyImpulsamiMs = 0;
+unsigned long  czasKoniecRefrakcjiMrug   = 0;
+bool           seriaMrugniecAktywna      = false;
 
-// ================ ZLICZANIE IMPULSÓW (KLIKNIĘCIA) ==================
-// Impulsy sa zliczane na zboczu opadajacym (oko otwiera sie po
-// krotkim mrugnieciu). Jesli miedzy impulsami minie mniej niz
-// OKNO_WIELOKLIKU_MS – naleza do tej samej serii.
+// Potwierdzenie stanu oka (N próbek × 10 ms) — anty-migotanie na progu histerezy
+bool           okoPotwierdzoneZamkniete  = false;
+uint8_t        licznikProbekZamknietych  = 0;
+uint8_t        licznikProbekOtwartych    = 0;
 
-uint8_t        licznikImpulsow         = 0;      // Ile impulsow w biezacej serii
-unsigned long  czasOstatniegoImpulsu   = 0;      // Kiedy zakonczyl sie ostatni impuls
-unsigned long  czasStartImpulsu        = 0;      // Kiedy rozpoczal sie biezacy impuls
+// =============== DETEKTOR TCRT5000 ===================================
 
-// =============== DETEKTOR TCRT5000 (SYGNAŁ ANALOGOWY) ================
-// Stan wewnętrzny detektora analogowego. wirtualnyStanCzujnika pełni
-// rolę dawnego digitalRead(PIN_LM393) — true = oko zamknięte (sygnał
-// poniżej baseline o co najmniej OFFSET_TRIGGER, po przejściu histerezy).
-// tcrtBaseline jest dynamicznie aktualizowany przy długiej bezczynności,
-// kompensując zmiany oświetlenia otoczenia.
+float          tcrtBaseline            = 0.0f;
+float          tcrtFiltered            = 0.0f;   // wolniejsza — logi
+float          tcrtFast                = 0.0f;   // szybka — progi
+int            tcrtRaw                 = 0;
+bool           wirtualnyStanCzujnika   = false;
 
-float          tcrtBaseline                = 0.0f;   // Punkt odniesienia (otwarte oko)
-float          tcrtFiltered                = 0.0f;   // Sygnał po filtrze EMA
-int            tcrtRaw                     = 0;      // Ostatni surowy odczyt ADC
-bool           wirtualnyStanCzujnika       = false;  // true = oko zamknięte
-unsigned long  czasOstatniejAktywnosciTCRT = 0;      // Do gating'u trackingu tła
+// =============== TRYB BEZPRZEWODOWY / BLE =======================================
+// XIAO ESP32-S3 (Plus): BAT+/BAT− → ładowarka na płytce (bez pomiaru % w MCU).
+// trybBezprzewodowy = brak USB-HID u hosta → mysz po BLE.
+// Status zasilania (debug) — niezależne: USB-HID, kabel USB, ogniwo, ładowanie.
 
-// ===================== TRYB SCROLLA ================================
-// Aktywowany 3 mrugnieciami (dioda swieci ciagle).
-// Dezaktywowany 2 mrugnieciami. W tym trybie ruch glowy gora/dol
-// steruje kolkiem myszy zamiast kursorem; klikniecia zablokowane.
+bool           trybBezprzewodowy       = false;
+bool           statusUsbHidAktywny     = false;  // tud_mounted()
+bool           statusUsbKabelAktywny   = false;  // tud_connected() lub PIN_VBUS_ADC
+bool           statusOgniwoMontowane   = false;  // HEFAS_OGNIOWO_ZAMONTOWANE
+bool           statusLadowanie         = false;  // ogniwo + zasilanie z USB (kabel/5V)
+bool           bleRadioWlaczony        = false;  // reklama BLE aktywna (mysz do sparowania)
+bool           bleUspionyBezczynnoscia = false;  // reklama OFF z powodu bezczynności (do pobudzenia)
+static bool    bleStosUruchomiony      = false;  // bleMysz.begin() wywołane (raz na sesję)
+static unsigned long czasOstatniejAktywnosciUrz = 0;
 
-bool           trybScrolla             = false;
+// ===================== TRYB SCROLLA =================================
 
-// ============= PRZYTRZYMANIE LEWEGO PRZYCISKU (DRAG) ===============
-// Aktywowane gdy czujnik jest aktywny nieprzerwanie dluzej niz
-// PROG_PRZYTRZYMANIA_MS. Lewy przycisk pozostaje wcisniety az
-// uzytkownik otworzy oko (drag & drop). Dioda swieci ciagle.
+bool           trybScrolla          = false;
+bool           przytrzymanieAktywne = false;
 
-bool           przytrzymanieAktywne    = false;
+// =============== LED / KALIBRACJA / GOTOWOŚĆ =======================
 
-// =============== NIBLOKUJĄCY BŁYSK DIODY WBUDOWANEJ ================
-// Wartosc millis(), po ktorej dioda gaśnie. Ustawiana przez
-// ustawBlyskLed(). W trybie scrolla/drag dioda swieci niezaleznie.
-
-unsigned long  koniecBlyskuLedMs       = 0;
+unsigned long  koniecBlyskuLedMs    = 0;
+bool           trwaKalibracja       = false;
+bool           systemGotowy         = false;
+bool           bannerGotowyWyslany  = false;
 
 // =================== ZMIENNE DIAGNOSTYKI ============================
 
-unsigned long  ostatniCzasDiagnostyki  = 0;
+unsigned long  ostatniCzasDiagnostyki = 0;
+bool           czyDebugWlaczony       = false;
 
-// ================== MONITOR BATERII (D16 = GPIO10) =================
-// Stan ostatniego pomiaru baterii. Aktualizowany przez
-// odczytajPoziomBaterii() co OKRES_POMIARU_BATERII_MS.
-// bateriaPodlaczona = false gdy napięcie ogniwa < V_BATERIA_BRAK_PROG
-// (ogniwo odłączone, zła polaryzacja lub błędne podłączenie +/−).
+// ============== MASZYNA STANÓW KLIKNIĘĆ HID ==========================
 
-bool           bateriaPodlaczona         = false;
-float          bateriaNapiecie           = 0.0f;   // [V] po przeliczeniu dzielnika
-uint8_t        bateriaProcent            = 0;      // 0-100
-int            bateriaRawAdc             = 0;      // napięcie na pinie ADC [mV] (trimmed-mean)
-int            bateriaRawCounts          = 0;      // surowy ADC 12-bit (diagnostyka)
-unsigned long  ostatniCzasPomiaruBaterii = 0;
+enum class StanHidKlik : uint8_t {
+    Bezczynny = 0,
+    PierwszyPress,
+    PauzaMiedzyDouble,
+    DrugiPress,
+};
 
-// Globalna flaga runtime sterująca wypisywaniem logów na Serial.
-// >>> TYMCZASOWO WŁĄCZONA NA POTRZEBY TESTÓW <<<
-// Po dostrojeniu progów TCRT przywróć wartość `false` — wtedy debug
-// będzie wyłączony po starcie, a przełączać go będzie sekwencja 6 mrugnięć.
-bool czyDebugWlaczony = false;
+struct HidZadanie {
+    uint8_t przycisk;
+    bool    podwojnyLewy;
+};
+
+static StanHidKlik  stanHidKlik       = StanHidKlik::Bezczynny;
+static uint8_t       hidPrzycisk       = 0;
+static unsigned long hidCzasStanu      = 0;
+static bool          hidDoubleClick    = false;
+
+static HidZadanie hidKolejka[HID_KOLEJKA_ROZMIAR];
+static uint8_t    hidKolejkaHead      = 0;
+static uint8_t    hidKolejkaTail      = 0;
+
+// ============== MASZYNA STANÓW KALIBRACJI ============================
+
+enum class StanKalibracji : uint8_t {
+    Bezczynny = 0,
+    Rownolegle,
+    IrStabilizacja,
+};
+
+static StanKalibracji stanKalibracji     = StanKalibracji::Bezczynny;
+static unsigned long  calNastepnyTickMs  = 0;
+static int            calIndeks          = 0;
+static int32_t        calSumaGx          = 0;
+static int32_t        calSumaGy          = 0;
+static int32_t        calSumaGz          = 0;
+static int            calProbkiTCRT[CAL_PROBKI_ROWNOLEGLE];
+static float          calBaselineWstepny = 0.0f;
+
+// ============== MASZYNA STANÓW MRUGNIĘĆ LED ============================
+
+enum class StanLedMrug : uint8_t {
+    Bezczynny = 0,
+    Swieci,
+    Zgaszony,
+};
+
+static StanLedMrug  stanLedMrug       = StanLedMrug::Bezczynny;
+static int          ledMrugPozostalo  = 0;
+static int          ledMrugCzasMs     = 100;
+static unsigned long ledMrugCzasStanu = 0;
+
+// ===================== DEKLARACJE =====================================
+
+void rozpocznijKalibracje(const char* zrodlo = nullptr);
+void odswiezKalibracje();
+void rozpocznijMrugnieciaLed(int ile, int czasMs);
+void odswiezMrugnieciaLed();
+static void hidKolejkaUruchomNastepne();
+static void obsluzGestPrzechylenia();
+static void odswiezGestKlawiatury();
+static void rozpocznijSkrotKlawiaturyEkranowej();
+static bool czyBleHidAktywne();
+static bool hidMoznaWyslac();
+static void odswiezSterowanieBle();
+static void zarejestrujAktywnoscUrzadzenia();
+static void probujProbudzicBleRuchiem();
+static void odswiezStatusZasilania();
+static bool czyZamrozicBaselineTCRT();
 
 // ===================== FUNKCJE POMOCNICZE ===========================
 
-// Ustawia czas trwania blysku diody wbudowanej [ms].
-// Niblokujace – dioda gaszona automatycznie w odswiezLed().
+bool czyUSBPodlaczone() {
+    return tud_mounted();
+}
+
+#if defined(PIN_VBUS_ADC)
+static bool czyZasilanie5VNaPinie() {
+    int raw = analogRead(PIN_VBUS_ADC);
+    return raw >= (int)VBUS_ADC_PROG_USB;
+}
+#endif
+
+static bool czyUsbKabelLub5V() {
+#if defined(PIN_VBUS_ADC)
+    return czyZasilanie5VNaPinie();
+#else
+    return tud_connected();
+#endif
+}
+
+static void odswiezStatusZasilaniaWew() {
+    statusUsbHidAktywny   = czyUSBPodlaczone();
+    statusUsbKabelAktywny = czyUsbKabelLub5V();
+#if HEFAS_OGNIOWO_ZAMONTOWANE
+    statusOgniwoMontowane = true;
+#else
+    statusOgniwoMontowane = false;
+#endif
+    statusLadowanie = statusOgniwoMontowane && statusUsbKabelAktywny;
+    trybBezprzewodowy = !statusUsbHidAktywny;
+}
+
+static bool czyBleHidAktywne() {
+    return bleRadioWlaczony && bleMysz.isConnected();
+}
+
+static bool czyZamrozicBaselineTCRT() {
+    return trwaKalibracja || wirtualnyStanCzujnika || okoPotwierdzoneZamkniete ||
+           przytrzymanieAktywne || seriaMrugniecAktywna || licznikImpulsow > 0;
+}
+
 void ustawBlyskLed(uint32_t czasMs) {
     koniecBlyskuLedMs = millis() + czasMs;
 }
 
-/**
- * Stan diody wbudowanej zależy od trybu:
- *   - tryb scrolla lub drag  → dioda świeci ciągle,
- *   - normalny tryb          → krótki błysk po kliknięciu.
- */
+static bool ledMruganieAktywne() {
+    return stanLedMrug != StanLedMrug::Bezczynny;
+}
+
+void rozpocznijMrugnieciaLed(int ile, int czasMs) {
+    if (ile <= 0 || czasMs <= 0) return;
+    ledMrugPozostalo  = ile;
+    ledMrugCzasMs     = czasMs;
+    stanLedMrug       = StanLedMrug::Swieci;
+    ledMrugCzasStanu  = millis();
+    digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void odswiezMrugnieciaLed() {
+    if (stanLedMrug == StanLedMrug::Bezczynny) return;
+
+    unsigned long teraz = millis();
+    if (teraz - ledMrugCzasStanu < (unsigned long)ledMrugCzasMs) return;
+
+    if (stanLedMrug == StanLedMrug::Swieci) {
+        digitalWrite(LED_BUILTIN, LOW);
+        stanLedMrug      = StanLedMrug::Zgaszony;
+        ledMrugCzasStanu = teraz;
+    } else {
+        ledMrugPozostalo--;
+        if (ledMrugPozostalo <= 0) {
+            stanLedMrug = StanLedMrug::Bezczynny;
+        } else {
+            digitalWrite(LED_BUILTIN, HIGH);
+            stanLedMrug      = StanLedMrug::Swieci;
+            ledMrugCzasStanu = teraz;
+        }
+    }
+}
+
 void odswiezLed() {
+    odswiezMrugnieciaLed();
+
     if (trybScrolla || przytrzymanieAktywne) {
         digitalWrite(LED_BUILTIN, HIGH);
         return;
     }
+
+    if (trwaKalibracja) {
+        if (stanKalibracji == StanKalibracji::Rownolegle) {
+            digitalWrite(LED_BUILTIN, HIGH);
+        }
+        return;
+    }
+
+    if (ledMruganieAktywne()) return;
+
+    // Brak aktywnej myszy (USB-HID lub BLE sparowane): mrug LED = sparuj BLE / pobudź radio,
+    // nie „podłącz USB” (ogniwo może być słabe, ale urządzenie i tak działa po BLE).
+    if (systemGotowy && !hidMoznaWyslac()) {
+        static unsigned long ostatnieMigBrakPol = 0;
+        unsigned long teraz = millis();
+        if (teraz - ostatnieMigBrakPol >= OKRES_MIG_LED_BRAK_POL_MS) {
+            ostatnieMigBrakPol = teraz;
+            koniecBlyskuLedMs = teraz + CZAS_MIG_LED_BRAK_POL_ON_MS;
+        }
+    }
+
     digitalWrite(LED_BUILTIN, (millis() < koniecBlyskuLedMs) ? HIGH : LOW);
 }
 
-// Blokujace migniecie dioda – uzywane TYLKO przy starcie (kalibracja, gotowość).
-void mrugnijDioda(int ile, int czasMs) {
+static void mrugnijDiodaBlokujaco(int ile, int czasMs) {
     for (int i = 0; i < ile; i++) {
         digitalWrite(LED_BUILTIN, HIGH);
         delay(czasMs);
@@ -158,465 +296,382 @@ void mrugnijDioda(int ile, int czasMs) {
     }
 }
 
-// Sprawdza czy kabel USB jest podpiety do hosta (komputer rozpoznal HID).
-bool czyUSBPodlaczone() {
-    return tud_mounted();
+static bool hidMoznaWyslac() {
+    return czyUSBPodlaczone() || czyBleHidAktywne();
 }
 
-// =================== KALIBRACJA ŻYROSKOPU ==========================
-
-void kalibracjaZyroskopu() {
-    if (czyDebugWlaczony) {
-        Serial.println(F("[KALIBRACJA] Nie ruszaj glowa..."));
-    }
-
-    int32_t sumaGx = 0, sumaGy = 0, sumaGz = 0;
-    int16_t ax, ay, az, gx, gy, gz;
-
-    for (int i = 0; i < PROBKI_KALIBRACJI; i++) {
-        czujnikIMU.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-        sumaGx += gx;
-        sumaGy += gy;
-        sumaGz += gz;
-        delay(5);
-    }
-
-    offsetGx = (float)sumaGx / PROBKI_KALIBRACJI;
-    offsetGy = (float)sumaGy / PROBKI_KALIBRACJI;
-    offsetGz = (float)sumaGz / PROBKI_KALIBRACJI;
-
-    if (czyDebugWlaczony) {
-        Serial.print(F("[KALIBRACJA] Gx="));
-        Serial.print(offsetGx, 1);
-        Serial.print(F("  Gy="));
-        Serial.print(offsetGy, 1);
-        Serial.print(F("  Gz="));
-        Serial.println(offsetGz, 1);
-    }
+static void hidMousePress(uint8_t przycisk) {
+    if (czyUSBPodlaczone())      usbMysz.press(przycisk);
+    else if (czyBleHidAktywne()) bleMysz.press(przycisk);
 }
 
-// ================== KALIBRACJA TCRT5000 ============================
-
-/**
- * Wyznaczenie linii bazowej sygnału analogowego TCRT5000 dla stanu
- * "oko otwarte". Procedura:
- *   1. Włącza 12-bitową rozdzielczość ADC ESP32-S3 (zakres 0–4095).
- *   2. Czeka 3 s, aby użytkownik mógł poprawnie założyć oprawki
- *      i ustawić oko w pozycji neutralnej (otwarte, patrzy w przód).
- *   3. Pobiera PROBKI_TCRT_KALIBRACJI próbek w odstępach 10 ms.
- *   4. Sortuje próbki rosnąco i odrzuca po 10% z dołu i z góry
- *      (trimmed-mean) — eliminuje artefakty pomiarowe i mikroruchy.
- *   5. Średnia z pozostałych 80% próbek staje się baseline.
- *   6. Inicjalizuje filtr EMA wartością baseline (brak skoku startowego).
- *
- * Sanity-check: jeśli baseline wypadnie poza sensownym zakresem
- * (czujnik niepodłączony / oświetlony bezpośrednio słońcem), system
- * sygnalizuje to ostrzeżeniem, ale kontynuuje pracę.
- */
-void kalibracjaTCRT5000() {
-    analogReadResolution(12);
-
-    if (czyDebugWlaczony) {
-        Serial.println(F("[TCRT] Kalibracja - trzymaj oko OTWARTE, nie ruszaj glowa..."));
-    }
-    webDebugLog("[TCRT] Kalibracja - 3 sekundy stabilizacji...");
-
-    // LED świeci ciągle przez cały czas trwania kalibracji TCRT
-    // — sygnał dla użytkownika, że system pracuje (a nie się zawiesił).
-    digitalWrite(LED_BUILTIN, HIGH);
-
-    delay(3000);
-
-    int probki[PROBKI_TCRT_KALIBRACJI];
-    for (int i = 0; i < PROBKI_TCRT_KALIBRACJI; i++) {
-        probki[i] = analogRead(PIN_TCRT_ANALOG);
-        delay(10);
-    }
-
-    digitalWrite(LED_BUILTIN, LOW);
-
-    std::sort(probki, probki + PROBKI_TCRT_KALIBRACJI);
-
-    int odrzuc  = PROBKI_TCRT_KALIBRACJI / 10;       // 10% z każdej strony
-    int liczba  = PROBKI_TCRT_KALIBRACJI - 2 * odrzuc;
-    long suma   = 0;
-    for (int i = odrzuc; i < PROBKI_TCRT_KALIBRACJI - odrzuc; i++) {
-        suma += probki[i];
-    }
-
-    tcrtBaseline                = (float)suma / (float)liczba;
-    tcrtFiltered                = tcrtBaseline;
-    wirtualnyStanCzujnika       = false;
-    czasOstatniejAktywnosciTCRT = millis();
-
-    if (czyDebugWlaczony) {
-        Serial.print(F("[TCRT] Baseline = "));
-        Serial.println(tcrtBaseline, 1);
-    }
-    webDebugLog(String("[TCRT] Baseline = ") + (int)tcrtBaseline);
-
-    if (tcrtBaseline < 100.0f || tcrtBaseline > 3900.0f) {
-        if (czyDebugWlaczony) {
-            Serial.println(F("[TCRT] OSTRZEZENIE: baseline poza zakresem - sprawdz montaz czujnika"));
-        }
-        webDebugLog("[TCRT] OSTRZEZENIE: baseline poza zakresem");
-        mrugnijDioda(5, 100);
-    }
+static void hidMouseRelease(uint8_t przycisk) {
+    if (czyUSBPodlaczone())      usbMysz.release(przycisk);
+    else if (czyBleHidAktywne()) bleMysz.release(przycisk);
 }
 
-// ============== KALIBRACJA SYSTEMU (STARTOWA, RÓWNOLEGŁA) ============
+static bool hidKlikZajety() {
+    return stanHidKlik != StanHidKlik::Bezczynny;
+}
 
-/**
- * Pojedyncza, równoległa kalibracja MPU6050 + TCRT5000.
- * Wywoływana raz w setup() — łączy dwa pomiary w jedną pętlę,
- * skracając czas startu z ~7 s do ~2 s i dając użytkownikowi
- * jeden, czytelny sygnał LED (ciągłe świecenie podczas kalibracji).
- *
- * W każdej z 200 iteracji (co 10 ms):
- *   - 1 próbka żyroskopu (gx, gy, gz) → uśredniana do offsetów,
- *   - 1 próbka TCRT5000 (ADC) → zapisywana do tablicy
- *     do późniejszego trimmed-mean.
- *
- * Łączny czas: 200 × 10 ms = 2 s. W tym czasie żyroskop dostaje
- * dłuższy okres uśredniania niż w pojedynczej kalibracjaZyroskopu()
- * (2 s zamiast 1 s) → lepsza redukcja niskoczęstotliwościowych
- * zaburzeń biasu, kosztem dwukrotnie rzadszego próbkowania
- * (100 Hz vs 200 Hz) — bez wpływu na praktyczną dokładność.
- *
- * Funkcje kalibracjaZyroskopu() i kalibracjaTCRT5000() pozostają
- * dostępne dla rekalibracji w runtime (5 mrugnięć, przycisk WWW).
- */
-void kalibracjaSystemu() {
-    analogReadResolution(12);
+// =================== KALIBRACJA — POMOCNICZE =========================
 
-    if (czyDebugWlaczony) {
-        Serial.println(F("[KAL] Kalibracja startowa - trzymaj glowe i oko nieruchomo (~2 s)..."));
+static float obliczBaselineTCRT(const int* probki, int liczbaProb) {
+    int probkiKopia[CAL_PROBKI_ROWNOLEGLE];
+    for (int i = 0; i < liczbaProb; i++) {
+        probkiKopia[i] = probki[i];
     }
-    webDebugLog("[KAL] Kalibracja startowa MPU + TCRT (~2 s)...");
-
-    // LED świeci ciągle — jeden, jednoznaczny sygnał "system pracuje"
-    digitalWrite(LED_BUILTIN, HIGH);
-
-    int32_t sumaGx = 0, sumaGy = 0, sumaGz = 0;
-    int16_t ax, ay, az, gx, gy, gz;
-    int     probkiTCRT[PROBKI_TCRT_KALIBRACJI];
-
-    for (int i = 0; i < PROBKI_TCRT_KALIBRACJI; i++) {
-        czujnikIMU.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-        sumaGx += gx;
-        sumaGy += gy;
-        sumaGz += gz;
-
-        probkiTCRT[i] = analogRead(PIN_TCRT_ANALOG);
-
-        delay(10);
-    }
-
-    digitalWrite(LED_BUILTIN, LOW);
-
-    // --- Offsety żyroskopu (zwykła średnia arytmetyczna) ---
-    offsetGx = (float)sumaGx / (float)PROBKI_TCRT_KALIBRACJI;
-    offsetGy = (float)sumaGy / (float)PROBKI_TCRT_KALIBRACJI;
-    offsetGz = (float)sumaGz / (float)PROBKI_TCRT_KALIBRACJI;
-
-    // --- Baseline TCRT5000 (trimmed-mean 80%) ---
-    std::sort(probkiTCRT, probkiTCRT + PROBKI_TCRT_KALIBRACJI);
-    int odrzuc = PROBKI_TCRT_KALIBRACJI / 10;
-    int liczba = PROBKI_TCRT_KALIBRACJI - 2 * odrzuc;
+    std::sort(probkiKopia, probkiKopia + liczbaProb);
+    int odrzuc = liczbaProb / 10;
+    int liczba = liczbaProb - 2 * odrzuc;
     long suma  = 0;
-    for (int i = odrzuc; i < PROBKI_TCRT_KALIBRACJI - odrzuc; i++) {
-        suma += probkiTCRT[i];
+    for (int i = odrzuc; i < liczbaProb - odrzuc; i++) {
+        suma += probkiKopia[i];
     }
-    float baselineWstepny       = (float)suma / (float)liczba;
-    tcrtBaseline                = baselineWstepny;
-    tcrtFiltered                = baselineWstepny;
-    wirtualnyStanCzujnika       = false;
-    czasOstatniejAktywnosciTCRT = millis();
+    return (float)suma / (float)liczba;
+}
 
-    // --- Stabilizacja termiczna diody IR (faza 2 kalibracji) ---
-    // Dioda IR w TCRT5000 przez pierwsze 1-2 sekundy po włączeniu
-    // nagrzewa się i jej jasność stabilizuje — powoduje to systematyczny
-    // dryf sygnału o ~30-60 ADC. Uruchamiamy filtr EMA przez 100 dodatkowych
-    // iteracji (~1s) z diodą już rozgrzaną, następnie ustawiamy baseline
-    // na ustabilizowaną wartość filtru. LED miga wolno = faza stabilizacji.
-    webDebugLog("[KAL] Stabilizacja IR (~1s)...");
-    for (int i = 0; i < 100; i++) {
-        int raw = analogRead(PIN_TCRT_ANALOG);
-        tcrtFiltered = EMA_ALPHA * (float)raw + (1.0f - EMA_ALPHA) * tcrtFiltered;
-        // Wolne mignięcia LED: ON przez pół iteracji, OFF przez pół
-        digitalWrite(LED_BUILTIN, (i % 20 < 10) ? HIGH : LOW);
-        delay(10);
-    }
-    digitalWrite(LED_BUILTIN, LOW);
-
-    // Baseline końcowy = tcrtFiltered po stabilizacji — dokładniejszy
-    // niż trimmed-mean z zimnej diody.
-    tcrtBaseline                = tcrtFiltered;
-    czasOstatniejAktywnosciTCRT = millis();
-
-    // --- Logi diagnostyczne ---
-    if (czyDebugWlaczony) {
-        Serial.print(F("[KAL] Gx="));           Serial.print(offsetGx, 1);
-        Serial.print(F("  Gy="));               Serial.print(offsetGy, 1);
-        Serial.print(F("  Gz="));               Serial.print(offsetGz, 1);
-        Serial.print(F("  | TCRT wst.="));      Serial.print(baselineWstepny, 1);
-        Serial.print(F("  fin.="));             Serial.println(tcrtBaseline, 1);
-    }
-    webDebugLog(String("[KAL] Baseline TCRT: wst.=") + (int)baselineWstepny
-                + " fin.=" + (int)tcrtBaseline);
-
-    // --- Sanity check ---
+static void sprawdzBaselineTCRT(const char* prefiks) {
     if (tcrtBaseline < 100.0f || tcrtBaseline > 3900.0f) {
         if (czyDebugWlaczony) {
-            Serial.println(F("[KAL] OSTRZEZENIE: baseline TCRT poza zakresem - sprawdz czujnik"));
+            Serial.print(prefiks);
+            Serial.println(F(" OSTRZEZENIE: baseline TCRT poza zakresem"));
         }
-        webDebugLog("[KAL] OSTRZEZENIE: baseline TCRT poza zakresem");
-        mrugnijDioda(5, 100);
+        webDebugLogKategoria(WEBLOG_IR, String(prefiks) + " OSTRZEZENIE: baseline TCRT poza zakresem");
+        rozpocznijMrugnieciaLed(5, 100);
+    }
+}
+
+static void zakonczKalibracje(bool pierwszyStart) {
+    trwaKalibracja    = false;
+    stanKalibracji    = StanKalibracji::Bezczynny;
+    digitalWrite(LED_BUILTIN, LOW);
+
+    okoPotwierdzoneZamkniete = false;
+    licznikProbekZamknietych  = 0;
+    licznikProbekOtwartych    = 0;
+    licznikImpulsow           = 0;
+    seriaMrugniecAktywna      = false;
+    deadlineKoniecSeriiMs     = 0;
+    czasOstatniegoImpulsu     = 0;
+    czasPierwszegoImpulsuSerii = 0;
+    ostatniaPrzerwaMiedzyImpulsamiMs = 0;
+    czasKoniecRefrakcjiMrug   = 0;
+
+    if (czyDebugWlaczony) {
+        Serial.print(F("[KAL] Gx="));      Serial.print(offsetGx, 1);
+        Serial.print(F("  Gy="));          Serial.print(offsetGy, 1);
+        Serial.print(F("  Gz="));          Serial.print(offsetGz, 1);
+        Serial.print(F("  TCRT wst.="));   Serial.print(calBaselineWstepny, 1);
+        Serial.print(F("  fin.="));       Serial.println(tcrtBaseline, 1);
+    }
+    webDebugLogKategoria(WEBLOG_IR, String("[KAL] Baseline wst.=") + (int)calBaselineWstepny
+                         + " fin.=" + (int)tcrtBaseline);
+
+    sprawdzBaselineTCRT("[KAL]");
+
+    {
+        String msg = F("[KAL] Gotowe — baseline ");
+        msg += (int)tcrtBaseline;
+        webDebugLogKategoria(WEBLOG_FSM, msg);
+    }
+
+    if (!systemGotowy) {
+        systemGotowy = true;
+        zarejestrujAktywnoscUrzadzenia();
+    }
+
+    rozpocznijMrugnieciaLed(3, 200);
+
+    if (pierwszyStart && !bannerGotowyWyslany && czyDebugWlaczony) {
+        bannerGotowyWyslany = true;
+        Serial.println(F("============================================"));
+        Serial.println(F("  HEFAS 4.0 GOTOWY"));
+        Serial.println(F("  1 mrug  = LPM"));
+        Serial.println(F("  2 mrug  = double-click LPM (wyl. scroll: OFF)"));
+        Serial.println(F("  3 mrug  = PPM"));
+        Serial.println(F("  4 mrug  = scroll ON (gdy wylaczony)"));
+        Serial.println(F("  5 mrug  = rekalibracja MPU + TCRT"));
+        Serial.println(F("  6 mrug  = toggle trybu debug"));
+        Serial.println(F("  Przechyl glowe w PRAWO (~0,3 s) = klaw. ekr. (Ctrl+Win+O, USB)"));
+        Serial.println(F("============================================"));
+    }
+}
+
+void rozpocznijKalibracje(const char* zrodlo) {
+    if (trwaKalibracja) return;
+
+    analogReadResolution(12);
+    trwaKalibracja       = true;
+    stanKalibracji       = StanKalibracji::Rownolegle;
+    calIndeks            = 0;
+    calSumaGx            = 0;
+    calSumaGy            = 0;
+    calSumaGz            = 0;
+    calNastepnyTickMs    = millis();
+
+    if (czyDebugWlaczony) {
+        Serial.print(F("[KAL] Start"));
+        if (zrodlo) {
+            Serial.print(F(" ("));
+            Serial.print(zrodlo);
+            Serial.print(')');
+        }
+        Serial.println(F(" MPU + TCRT ~3 s"));
+    }
+    {
+        String msg = F("[KAL] Start");
+        if (zrodlo) {
+            msg += F(" (");
+            msg += zrodlo;
+            msg += ')';
+        }
+        msg += F(" — MPU + TCRT ~3 s");
+        webDebugLogKategoria(WEBLOG_FSM, msg);
+    }
+    webDebugLogKategoria(WEBLOG_IR, "[KAL] Start kalibracji MPU + TCRT...");
+    digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void odswiezKalibracje() {
+    if (stanKalibracji == StanKalibracji::Bezczynny) return;
+
+    unsigned long teraz = millis();
+    if (teraz < calNastepnyTickMs) return;
+    calNastepnyTickMs = teraz + CAL_PRZERWA_MS;
+
+    switch (stanKalibracji) {
+        case StanKalibracji::Rownolegle: {
+            int16_t ax, ay, az, gx, gy, gz;
+            czujnikIMU.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+            calSumaGx += gx;
+            calSumaGy += gy;
+            calSumaGz += gz;
+            calProbkiTCRT[calIndeks] = analogRead(PIN_TCRT_ANALOG);
+            calIndeks++;
+
+            if (calIndeks < CAL_PROBKI_ROWNOLEGLE) break;
+
+            offsetGx = (float)calSumaGx / (float)CAL_PROBKI_ROWNOLEGLE;
+            offsetGy = (float)calSumaGy / (float)CAL_PROBKI_ROWNOLEGLE;
+            offsetGz = (float)calSumaGz / (float)CAL_PROBKI_ROWNOLEGLE;
+
+            calBaselineWstepny          = obliczBaselineTCRT(calProbkiTCRT, CAL_PROBKI_ROWNOLEGLE);
+            tcrtBaseline                = calBaselineWstepny;
+            tcrtFiltered                = calBaselineWstepny;
+            tcrtFast                    = calBaselineWstepny;
+            wirtualnyStanCzujnika       = false;
+
+            calIndeks      = 0;
+            stanKalibracji = StanKalibracji::IrStabilizacja;
+            webDebugLogKategoria(WEBLOG_IR, "[KAL] Stabilizacja IR (~1 s)...");
+            webDebugLogKategoria(WEBLOG_FSM, "[KAL] Stabilizacja IR (~1 s)...");
+            break;
+        }
+
+        case StanKalibracji::IrStabilizacja: {
+            int raw = analogRead(PIN_TCRT_ANALOG);
+            tcrtFiltered = EMA_ALPHA_WYSWIETLANIA * (float)raw +
+                           (1.0f - EMA_ALPHA_WYSWIETLANIA) * tcrtFiltered;
+            tcrtFast = EMA_ALPHA_SZYBKI * (float)raw + (1.0f - EMA_ALPHA_SZYBKI) * tcrtFast;
+            digitalWrite(LED_BUILTIN, (calIndeks % 20 < 10) ? HIGH : LOW);
+            calIndeks++;
+
+            if (calIndeks < CAL_PROBKI_IR) break;
+
+            tcrtBaseline   = tcrtFiltered;
+            bool pierwszy  = !systemGotowy;
+            zakonczKalibracje(pierwszy);
+            break;
+        }
+
+        default:
+            break;
     }
 }
 
 // =========== AKTUALIZACJA DETEKTORA ANALOGOWEGO TCRT5000 ===========
 
-/**
- * Wywoływana w każdej iteracji pętli głównej (~100 Hz).
- * Realizuje trzystopniowy łańcuch przetwarzania sygnału:
- *
- *   1. Filtr EMA (dolnoprzepustowy):
- *        filt(n) = α · raw(n) + (1−α) · filt(n−1)
- *      Wygładza szum kwantyzacji i fluktuacje światła otoczenia.
- *
- *   2. Komparator z histerezą (dwa progi):
- *        oko otwarte → zamknięte:  filt < baseline − OFFSET_TRIGGER
- *        oko zamknięte → otwarte:  filt > baseline − OFFSET_RELEASE
- *      OFFSET_TRIGGER > OFFSET_RELEASE zapobiega oscylacjom na granicy.
- *
- *   3. Adaptacyjny baseline (wolny EMA, bez timeoutu):
- *        tcrtBaseline aktualizowany przez EMA_ALPHA_WOLNY co cykl gdy oko otwarte.
- *        Stała czasowa ~2 s → baseline dogania zmiany oświetlenia/pozycji w ~3–5 s.
- *        Podczas mrugnięcia baseline zamrożony → nie ucieka pod sygnałem.
- */
 void aktualizujDetektorTCRT() {
-    tcrtRaw      = analogRead(PIN_TCRT_ANALOG);
-    tcrtFiltered = EMA_ALPHA * (float)tcrtRaw + (1.0f - EMA_ALPHA) * tcrtFiltered;
+    tcrtRaw = analogRead(PIN_TCRT_ANALOG);
 
+    tcrtFast = EMA_ALPHA_SZYBKI * (float)tcrtRaw + (1.0f - EMA_ALPHA_SZYBKI) * tcrtFast;
+    tcrtFiltered = EMA_ALPHA_WYSWIETLANIA * (float)tcrtRaw +
+                   (1.0f - EMA_ALPHA_WYSWIETLANIA) * tcrtFiltered;
+
+    // Histereza na szybkiej ścieżce — lepsze odwzorowanie krótkich mrugnięć
     if (!wirtualnyStanCzujnika) {
-        // Oko otwarte → szukamy mrugnięcia w oknie (TRIGGER, MAX_ZWARCIA).
-        // Sygnał musi spaść wystarczająco głęboko (> OFFSET_TRIGGER) ale NIE
-        // za głęboko (< baseline - OFFSET_MAX_ZWARCIA). Zbyt głęboki spadek
-        // to zdarzenie mechaniczne (zdjęcie okularów, zasłonięcie czujnika) —
-        // ignorujemy go, nie ustawiamy wirtualnyStanCzujnika.
-        if (tcrtFiltered < (tcrtBaseline - OFFSET_TRIGGER) &&
-            tcrtFiltered > (tcrtBaseline - OFFSET_MAX_ZWARCIA)) {
-            wirtualnyStanCzujnika       = true;
-            czasOstatniejAktywnosciTCRT = millis();
+        if (tcrtFast < (tcrtBaseline - OFFSET_TRIGGER) &&
+            tcrtFast > (tcrtBaseline - OFFSET_MAX_ZWARCIA)) {
+            wirtualnyStanCzujnika = true;
         }
     } else {
-        // Oko zamknięte → dwa warunki wyjścia:
-        //   1. Normalny: sygnał wrócił powyżej progu RELEASE → oko otwarte.
-        //   2. Mechaniczny: sygnał spadł PONIŻEJ okna mrugnięcia (np. zdjęto
-        //      okulary już po wykryciu zamknięcia) → resetujemy do "otwarte"
-        //      żeby uniknąć fałszywego dragu.
-        if (tcrtFiltered > (tcrtBaseline - OFFSET_RELEASE)) {
-            wirtualnyStanCzujnika       = false;
-            czasOstatniejAktywnosciTCRT = millis();
-        } else if (tcrtFiltered < (tcrtBaseline - OFFSET_MAX_ZWARCIA)) {
-            wirtualnyStanCzujnika       = false;
-            czasOstatniejAktywnosciTCRT = millis();
+        if (tcrtFast > (tcrtBaseline - OFFSET_RELEASE)) {
+            wirtualnyStanCzujnika = false;
+        } else if (tcrtFast < (tcrtBaseline - OFFSET_MAX_ZWARCIA)) {
+            wirtualnyStanCzujnika = false;
+            okoPotwierdzoneZamkniete = false;
+            licznikProbekZamknietych = 0;
+            licznikProbekOtwartych   = 0;
             if (czyDebugWlaczony) {
-                webDebugLog("[TCRT] Zdarzenie mechaniczne - reset (sygnal poza oknem)");
+                webDebugLogKategoria(WEBLOG_IR, "[TCRT] Zdarzenie mechaniczne - reset");
             }
         }
     }
 
-    // Adaptacja baseline: ciągły wolny EMA działający wyłącznie gdy oko otwarte.
-    // Nie ma timeoutu — baseline adaptuje się natychmiast (ale bardzo wolno,
-    // EMA_ALPHA_WOLNY ≈ 0.005 = stała czasowa ~2 s @100 Hz).
-    // Efekt: zmiana oświetlenia lub pozycji głowy → baseline dogania w ~3–5 s
-    // bez żadnych false-clicks i bez ręcznego ustawiania timeoutów.
-    // Mrugnięcie (oko zamknięte) → update wstrzymany → baseline nie ucieka.
-    if (!wirtualnyStanCzujnika) {
-        tcrtBaseline = EMA_ALPHA_WOLNY * tcrtFiltered + (1.0f - EMA_ALPHA_WOLNY) * tcrtBaseline;
+    // Baseline tylko przy stabilnie otwartym oku i poza serią mrugnięć
+    if (!czyZamrozicBaselineTCRT()) {
+        tcrtBaseline = EMA_ALPHA_WOLNY * tcrtFast + (1.0f - EMA_ALPHA_WOLNY) * tcrtBaseline;
     }
 }
 
-// =================== MONITOR BATERII (D16) =========================
-//
-// Pin D16 na płytce XIAO ESP32-S3 Plus = GPIO10 = ADC_BAT.
-// Wewnętrzny dzielnik napięcia 1:11 (R9/R8) do padu BAT+ (Akyga 1900 mAh 1S, tylko +/−).
-// Czytamy stąd napięcie ogniwa Li-Pol, mapujemy przez 8-punktową
-// krzywą rozładowania na procent. Krzywa jest typowa dla 1S Li-Pol
-// 3.0-4.2 V — pierwsze 80% pojemności rozłożone w wąskim oknie
-// 3.65-4.20 V (charakterystyczne plateau Li-Pol), ostatnie 20%
-// poniżej 3.55 V opada szybko.
+// ================= TRYB ZASILANIA + STEROWANIE BLE ======================
+// Reklama BLE od bootu, gdy brak USB-HID (także podczas kalibracji). USB-HID → reklama OFF.
 
-/**
- * Mapowanie napięcia ogniwa Li-Pol 1S na procent naładowania.
- * Interpolacja liniowa między 8 punktami referencyjnymi krzywej.
- */
-static uint8_t napiecieBateriiNaProcent(float v) {
-    static const struct { float v; uint8_t p; } krzywa[] = {
-        { 4.20f, 100 }, { 4.10f,  90 }, { 4.00f,  80 }, { 3.85f,  60 },
-        { 3.75f,  40 }, { 3.65f,  20 }, { 3.50f,  10 }, { 3.30f,   0 }
-    };
-    const size_t N = sizeof(krzywa) / sizeof(krzywa[0]);
+#if CONFIG_BT_ENABLED
+static void wlaczReklameBle();
+static void wylaczReklameBle(bool zPowoduBezczynnosci);
+#endif
 
-    if (v >= krzywa[0].v)     return 100;
-    if (v <= krzywa[N-1].v)   return 0;
+static void odswiezStatusZasilania() {
+    static bool popHid = false, popKabel = false, popOgn = false, popLad = false;
 
-    for (size_t i = 1; i < N; ++i) {
-        if (v >= krzywa[i].v) {
-            float frac = (v - krzywa[i].v) / (krzywa[i-1].v - krzywa[i].v);
-            float p = (float)krzywa[i].p + frac * (float)(krzywa[i-1].p - krzywa[i].p);
-            return (uint8_t)(p + 0.5f);
-        }
-    }
-    return 0;
-}
+    odswiezStatusZasilaniaWew();
 
-/**
- * Inicjalizacja ADC baterii — wywoływać PO kalibracjaSystemu() i ponownie po webDebugInit()
- * (start WiFi może zresetować ustawienia ADC w niektórych wersjach core).
- * ADC_11db: zakres 0–~3100 mV — pin baterii (~330 mV) mieści się w liniowej części charakterystyki.
- */
-static void initOdczytBaterii() {
-    analogReadResolution(12);
-    analogSetPinAttenuation(PIN_ADC_BATERIA, ADC_11db);
-    for (int i = 0; i < 16; ++i) {
-        analogReadMilliVolts(PIN_ADC_BATERIA);
-        delay(5);
-    }
-}
+    if (popHid != statusUsbHidAktywny || popKabel != statusUsbKabelAktywny ||
+        popOgn != statusOgniwoMontowane || popLad != statusLadowanie) {
+        popHid   = statusUsbHidAktywny;
+        popKabel = statusUsbKabelAktywny;
+        popOgn   = statusOgniwoMontowane;
+        popLad   = statusLadowanie;
 
-/**
- * Trimmed-mean napięcia na pinie GPIO10 [mV] + surowy ADC.
- * Atenuacja ADC_11db ustawiana tuż przed próbkowaniem.
- */
-static int odczytPinBateriiMv(int* rawOut) {
-    analogSetPinAttenuation(PIN_ADC_BATERIA, ADC_11db);
-
-    int probkiMv[PROBKI_BATERII];
-    int probkiRaw[PROBKI_BATERII];
-    for (int i = 0; i < PROBKI_BATERII; ++i) {
-        probkiRaw[i] = analogRead(PIN_ADC_BATERIA);
-        probkiMv[i]  = analogReadMilliVolts(PIN_ADC_BATERIA);
-        delayMicroseconds(300);
-    }
-
-    std::sort(probkiMv, probkiMv + PROBKI_BATERII);
-    std::sort(probkiRaw, probkiRaw + PROBKI_BATERII);
-
-    int odrzuc = PROBKI_BATERII / 10;
-    int start  = odrzuc;
-    int end    = PROBKI_BATERII - odrzuc;
-    long sumaMv  = 0;
-    long sumaRaw = 0;
-    for (int i = start; i < end; ++i) {
-        sumaMv  += probkiMv[i];
-        sumaRaw += probkiRaw[i];
-    }
-    int liczba = end - start;
-    if (rawOut) *rawOut = (int)(sumaRaw / liczba);
-    return (int)(sumaMv / liczba);
-}
-
-/**
- * Pomiar napięcia baterii i wyliczenie stanu naładowania.
- *
- * Wywołanie wewnątrz loop() — funkcja sama dba o swój okres pracy
- * (OKRES_POMIARU_BATERII_MS), więc bezpiecznie wywoływać co iterację.
- * ADC1 jest niezależne od WiFi/BLE — odczyt jest stabilny.
- *
- * Używa analogReadMilliVolts() z ADC_11db + trimmed-mean (odrzuca 10% skrajnych próbek).
- * Pomiar działa zawsze — także przy USB; w logu dopisek (USB).
- */
-void odczytajPoziomBaterii() {
-    unsigned long teraz = millis();
-    if ((teraz - ostatniCzasPomiaruBaterii) < OKRES_POMIARU_BATERII_MS) return;
-    ostatniCzasPomiaruBaterii = teraz;
-
-    bool usbPodlaczone = tud_mounted();
-
-    int rawCounts = 0;
-    bateriaRawAdc       = odczytPinBateriiMv(&rawCounts);
-    bateriaRawCounts    = rawCounts;
-    float vPin          = bateriaRawAdc / 1000.0f;
-    bateriaNapiecie     = vPin * DZIELNIK_BATERII;
-
-    bateriaPodlaczona = (bateriaNapiecie > V_BATERIA_BRAK_PROG);
-    bateriaProcent    = bateriaPodlaczona ? napiecieBateriiNaProcent(bateriaNapiecie) : 0;
-
-    // Log do WebDebug — dane do kalibracji dzielnika.
-    // Kalibracja: DZIELNIK_BATERII = V_multimetr / (bateriaRawAdc / 1000.0)
-    {
-        String diagMsg = "[BAT] raw=";
-        diagMsg += bateriaRawCounts;
-        diagMsg += " pin=";
-        diagMsg += bateriaRawAdc;
-        diagMsg += "mV Vbat=";
-        diagMsg += String(bateriaNapiecie, 2);
-        diagMsg += "V";
-        if (usbPodlaczone) diagMsg += " (USB)";
-        if (bateriaPodlaczona) {
-            diagMsg += " [";
-            diagMsg += bateriaProcent;
-            diagMsg += "%]";
-        } else {
-            diagMsg += " BRAK";
-        }
-        webDebugLog(diagMsg);
-    }
-
-    // BLE Battery Service (UUID 0x180F) — aktualizujemy tylko gdy procent realnie
-    // się zmienił, żeby nie zaśmiecać BLE bezsensownymi notyfikacjami.
-    static uint8_t ostatniBleProcent = 255;
-    if (bateriaPodlaczona && bateriaProcent != ostatniBleProcent) {
-        bleMysz.setBatteryLevel(bateriaProcent);
-        ostatniBleProcent = bateriaProcent;
         if (czyDebugWlaczony) {
-            String bleMsg = "[BLE] Battery Service = ";
-            bleMsg += bateriaProcent;
-            bleMsg += "%";
-            Serial.println(bleMsg);
-            webDebugLog(bleMsg);
+            Serial.printf("[ZAS] HID=%s  USB-kabel/5V=%s  Ogniwo=%s  Ladowanie=%s  BLE=%s\n",
+                          statusUsbHidAktywny ? "TAK" : "NIE",
+                          statusUsbKabelAktywny ? "TAK" : "NIE",
+                          statusOgniwoMontowane ? "TAK" : "NIE",
+                          statusLadowanie ? "TAK" : "NIE",
+                          bleRadioWlaczony ? "ON" : "OFF");
         }
-    }
 
-    if (czyDebugWlaczony) {
-        String msg = "[BAT] raw=";
-        msg += bateriaRawCounts;
-        msg += " pin=";
-        msg += bateriaRawAdc;
-        msg += "mV V=";
-        msg += String(bateriaNapiecie, 2);
-        if (usbPodlaczone) msg += " (USB)";
-        if (bateriaPodlaczona) {
-            msg += " [";
-            msg += bateriaProcent;
-            msg += "%]";
-        } else {
-            msg += " BRAK";
+        String msg = "[ZAS] ";
+        if (statusOgniwoMontowane) msg += "Ogniwo ";
+        if (statusUsbHidAktywny)   msg += "USB-HID ";
+        else if (statusUsbKabelAktywny) msg += "USB(5V) ";
+        if (statusLadowanie)       msg += "lad. ";
+        if (!statusUsbHidAktywny && !statusUsbKabelAktywny && statusOgniwoMontowane) {
+            msg += "-> BLE";
         }
-        Serial.println(msg);
-        webDebugLog(msg);
+        webDebugLogKategoria(WEBLOG_BAT, msg);
     }
+}
+
+#if CONFIG_BT_ENABLED
+static void wlaczReklameBle() {
+    if (!bleStosUruchomiony) {
+        bleMysz.begin();
+        bleStosUruchomiony = true;
+    }
+    BLEDevice::startAdvertising();
+    bleRadioWlaczony = true;
+    bleUspionyBezczynnoscia = false;
+    if (czyDebugWlaczony) {
+        Serial.println(F("[BLE] Reklama ON"));
+    }
+    webDebugLogKategoria(WEBLOG_HID, "[BLE] Reklama ON");
+}
+
+static void wylaczReklameBle(bool zPowoduBezczynnosci) {
+    if (!bleStosUruchomiony) {
+        bleRadioWlaczony = false;
+        bleUspionyBezczynnoscia = false;
+        return;
+    }
+    BLEDevice::getAdvertising()->stop();
+    bleRadioWlaczony = false;
+    bleUspionyBezczynnoscia = zPowoduBezczynnosci;
+    if (czyDebugWlaczony) {
+        Serial.println(zPowoduBezczynnosci
+                       ? F("[BLE] Uspienie (bezczynnosc)")
+                       : F("[BLE] Reklama OFF (USB-HID)"));
+    }
+    webDebugLogKategoria(WEBLOG_HID,
+        zPowoduBezczynnosci ? "[BLE] Uspienie (bezczynnosc)" : "[BLE] Reklama OFF (USB-HID)");
+}
+#endif
+
+static void zarejestrujAktywnoscUrzadzenia() {
+    czasOstatniejAktywnosciUrz = millis();
+}
+
+#if CONFIG_BT_ENABLED
+static void probujProbudzicBleRuchiem() {
+    if (!bleUspionyBezczynnoscia || czyUSBPodlaczone() || !systemGotowy) return;
+    float ruch = fabsf(ostatniaPredkoscGx) + fabsf(ostatniaPredkoscGy);
+    if (ruch >= PROG_PROBUDZENIA_BLE_DEG_S) {
+        zarejestrujAktywnoscUrzadzenia();
+    }
+}
+#else
+static void probujProbudzicBleRuchiem() {}
+#endif
+
+void odswiezSterowanieBle() {
+    odswiezStatusZasilania();
+
+    bool usb = czyUSBPodlaczone();
+    bool chceBleRadia = !usb;   // reklama od startu na ogniwie (także w kalibracji)
+
+#if CONFIG_BT_ENABLED
+    if (!chceBleRadia) {
+        if (bleRadioWlaczony || bleUspionyBezczynnoscia) {
+            wylaczReklameBle(false);
+        }
+    } else {
+        bool polaczony = bleMysz.isConnected();
+        if (polaczony) {
+            zarejestrujAktywnoscUrzadzenia();
+        }
+
+        unsigned long teraz = millis();
+        unsigned long bezczynMs = (czasOstatniejAktywnosciUrz == 0)
+                                  ? 0
+                                  : (teraz - czasOstatniejAktywnosciUrz);
+        bool bezczynny = !polaczony &&
+                         (bezczynMs >= (unsigned long)CZAS_BEZCZYNNOSCI_BLE_MS);
+        bool chceReklame = polaczony || !bezczynny;
+
+        if (chceReklame) {
+            if (!bleRadioWlaczony) {
+                wlaczReklameBle();
+            }
+        } else if (bleRadioWlaczony) {
+            wylaczReklameBle(true);
+        }
+    }
+#else
+    bleRadioWlaczony = false;
+    bleUspionyBezczynnoscia = false;
+#endif
 }
 
 // ================ ODCZYT I FILTRACJA DANYCH IMU ====================
 
-/**
- * Mapowanie osi (empiryczne, montaż czujnika na czole):
- *   gx → kursor X (lewo/prawo)
- *   gz → kursor Y (góra/dół)
- */
 void odczytajIMU() {
     int16_t ax, ay, az, gx, gy, gz;
     czujnikIMU.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 
-    float predkoscOsX = ((float)gx - offsetGx) / CZULOSC_ZYRO_LSB;
-    float predkoscOsZ = ((float)gz - offsetGz) / CZULOSC_ZYRO_LSB;
+    ostatniaPredkoscGx = ((float)gx - offsetGx) / CZULOSC_ZYRO_LSB;
+    ostatniaPredkoscGy = ((float)gy - offsetGy) / CZULOSC_ZYRO_LSB;
+    ostatniaPredkoscGz = ((float)gz - offsetGz) / CZULOSC_ZYRO_LSB;
+    probujProbudzicBleRuchiem();
 
+    float predkoscOsX = ostatniaPredkoscGx;
+    float predkoscOsZ = ostatniaPredkoscGz;
+
+    float progZ = trybScrolla ? PROG_ZYRO_SKROL_DEG_S : PROG_ZYROSKOPU;
     if (fabs(predkoscOsX) < PROG_ZYROSKOPU) predkoscOsX = 0.0f;
-    if (fabs(predkoscOsZ) < PROG_ZYROSKOPU) predkoscOsZ = 0.0f;
+    if (fabs(predkoscOsZ) < progZ) predkoscOsZ = 0.0f;
 
     if (fabs(predkoscOsX) < STREFA_MARTWA) predkoscOsX = 0.0f;
     if (fabs(predkoscOsZ) < STREFA_MARTWA) predkoscOsZ = 0.0f;
@@ -628,252 +683,453 @@ void odczytajIMU() {
     kursorDeltaY = constrain((int)dY, -127, 127);
 }
 
+// ============== GEST Gy: przechyl w prawo → Ctrl+Win (klawiatura ekranu) =====
+
+enum class StanGestKlaw : uint8_t {
+    Bezczynny = 0,
+    Wcisniety,
+};
+
+static StanGestKlaw  stanGestKlaw       = StanGestKlaw::Bezczynny;
+static unsigned long gestKlawCzasStanu  = 0;
+static unsigned long gestCooldownKoniecMs = 0;
+static bool          gestPrzechylTrwa     = false;
+static unsigned long gestPrzechylStartMs  = 0;
+
+static void rozpocznijSkrotKlawiaturyEkranowej() {
+    zarejestrujAktywnoscUrzadzenia();
+    if (!czyUSBPodlaczone()) {
+        if (czyDebugWlaczony) {
+            Serial.println(F("[GEST] Ctrl+Win+O: tylko USB-HID (mysz dziala po BLE)"));
+            webDebugLogKategoria(WEBLOG_FSM, "[GEST] OSK: tylko USB-HID");
+        }
+        return;
+    }
+    if (stanGestKlaw != StanGestKlaw::Bezczynny) return;
+
+    usbKlaw.press(KEY_LEFT_CTRL);
+    usbKlaw.press(KEY_LEFT_GUI);
+    usbKlaw.press('o');
+    stanGestKlaw      = StanGestKlaw::Wcisniety;
+    gestKlawCzasStanu = millis();
+    rozpocznijMrugnieciaLed(2, 80);
+    if (czyDebugWlaczony) {
+        Serial.println(F("[GEST] prawo — Ctrl+Win+O"));
+        webDebugLogKategoria(WEBLOG_FSM, "[GEST] prawo Ctrl+Win+O");
+    }
+}
+
+static void odswiezGestKlawiatury() {
+    if (stanGestKlaw == StanGestKlaw::Bezczynny) return;
+    if ((millis() - gestKlawCzasStanu) < 60UL) return;
+
+    usbKlaw.releaseAll();
+    stanGestKlaw = StanGestKlaw::Bezczynny;
+}
+
+static void obsluzGestPrzechylenia() {
+#if !GEST_PRZECHYL_PRAWO_WLACZONY
+    return;
+#else
+    if (!systemGotowy || trwaKalibracja) return;
+#if WEBDEBUG_AKTYWNY
+    if (webPauzaMyszy) return;
+#endif
+    if (przytrzymanieAktywne || okoPotwierdzoneZamkniete || wirtualnyStanCzujnika) return;
+    if (hidKlikZajety()) return;
+    if (stanGestKlaw != StanGestKlaw::Bezczynny) return;
+    if (millis() < gestCooldownKoniecMs) return;
+
+    if (fabs(ostatniaPredkoscGx) > GEST_BLOKADA_GX_GZ_DEG_S ||
+        fabs(ostatniaPredkoscGz) > GEST_BLOKADA_GX_GZ_DEG_S) {
+        gestPrzechylTrwa = false;
+        return;
+    }
+
+    float gy = ostatniaPredkoscGy * (float)ODWROC_GEST_GY;
+    bool przechylPrawo = (gy < -GEST_GY_PROG_DEG_S);
+    float progHist = -GEST_GY_PROG_DEG_S * GEST_GY_HISTEREZA_ODSET;
+
+    if (przechylPrawo) {
+        if (!gestPrzechylTrwa) {
+            gestPrzechylTrwa    = true;
+            gestPrzechylStartMs = millis();
+        } else if ((millis() - gestPrzechylStartMs) >= (unsigned long)GEST_GY_CZAS_TRWANIA_MS) {
+            rozpocznijSkrotKlawiaturyEkranowej();
+            gestCooldownKoniecMs = millis() + (unsigned long)GEST_COOLDOWN_MS;
+            gestPrzechylTrwa     = false;
+        }
+    } else if (gestPrzechylTrwa && gy > progHist) {
+        gestPrzechylTrwa = false;
+    }
+#endif
+}
+
 // ============== WYSYŁANIE DANYCH MYSZY (USB / BLE) =================
 
-/**
- * Normalny tryb: wysyła ruch kursora.
- * Tryb scrolla:  ruch góra/dół → kółko myszy (scroll).
- */
 void wyslijRuchMyszy(int dx, int dy) {
+    zarejestrujAktywnoscUrzadzenia();
     if (trybScrolla) {
         int scroll = constrain(-dy / DZIELNIK_SCROLLA, -5, 5);
         if (scroll == 0) return;
         if (czyUSBPodlaczone())         usbMysz.move(0, 0, (int8_t)scroll);
-        else if (bleMysz.isConnected()) bleMysz.move(0, 0, (int8_t)scroll);
+        else if (czyBleHidAktywne())      bleMysz.move(0, 0, (int8_t)scroll);
     } else {
         if (czyUSBPodlaczone())         usbMysz.move((int8_t)dx, (int8_t)dy);
-        else if (bleMysz.isConnected()) bleMysz.move((int8_t)dx, (int8_t)dy);
+        else if (czyBleHidAktywne())      bleMysz.move((int8_t)dx, (int8_t)dy);
     }
 }
 
-/**
- * Kliknięcie wzorcem press → delay → release + błysk diody.
- */
+static bool hidKolejkaEnqueue(uint8_t przycisk, bool podwojnyLewy) {
+    uint8_t nextHead = (uint8_t)((hidKolejkaHead + 1) % HID_KOLEJKA_ROZMIAR);
+    if (nextHead == hidKolejkaTail) {
+        webDebugLogKategoria(WEBLOG_FSM, "[HID] Kolejka pelna - odrzucono klikniecie");
+        return false;
+    }
+    hidKolejka[hidKolejkaHead].przycisk      = przycisk;
+    hidKolejka[hidKolejkaHead].podwojnyLewy = podwojnyLewy;
+    hidKolejkaHead = nextHead;
+    return true;
+}
+
+static void rozpocznijKlikniecieHid(uint8_t przycisk, bool podwojnyLewy) {
+    if (!hidMoznaWyslac()) return;
+
+    if (stanHidKlik != StanHidKlik::Bezczynny) {
+        hidKolejkaEnqueue(przycisk, podwojnyLewy);
+        return;
+    }
+
+    hidPrzycisk    = przycisk;
+    hidDoubleClick = podwojnyLewy;
+    hidMousePress(przycisk);
+    stanHidKlik    = StanHidKlik::PierwszyPress;
+    hidCzasStanu  = millis();
+}
+
+static void hidKolejkaUruchomNastepne() {
+    if (stanHidKlik != StanHidKlik::Bezczynny) return;
+    if (hidKolejkaHead == hidKolejkaTail) return;
+
+    HidZadanie zad = hidKolejka[hidKolejkaTail];
+    hidKolejkaTail = (uint8_t)((hidKolejkaTail + 1) % HID_KOLEJKA_ROZMIAR);
+    rozpocznijKlikniecieHid(zad.przycisk, zad.podwojnyLewy);
+}
+
+void odswiezHidKlikniecia() {
+    if (stanHidKlik == StanHidKlik::Bezczynny) {
+        hidKolejkaUruchomNastepne();
+        return;
+    }
+
+    unsigned long teraz = millis();
+    StanHidKlik poprzedni = stanHidKlik;
+
+    switch (stanHidKlik) {
+        case StanHidKlik::PierwszyPress:
+            if (teraz - hidCzasStanu >= (unsigned long)CZAS_KROTKIEGO_KLIKU_MS) {
+                hidMouseRelease(hidPrzycisk);
+                if (hidPrzycisk == MOUSE_LEFT && hidDoubleClick) {
+                    stanHidKlik  = StanHidKlik::PauzaMiedzyDouble;
+                    hidCzasStanu = teraz;
+                } else {
+                    stanHidKlik = StanHidKlik::Bezczynny;
+                    ustawBlyskLed(CZAS_BLYSKU_LED_MS);
+                }
+            }
+            break;
+
+        case StanHidKlik::PauzaMiedzyDouble:
+            if (teraz - hidCzasStanu >= (unsigned long)CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS) {
+                hidMousePress(hidPrzycisk);
+                stanHidKlik  = StanHidKlik::DrugiPress;
+                hidCzasStanu = teraz;
+            }
+            break;
+
+        case StanHidKlik::DrugiPress:
+            if (teraz - hidCzasStanu >= (unsigned long)CZAS_KROTKIEGO_KLIKU_MS) {
+                hidMouseRelease(hidPrzycisk);
+                stanHidKlik = StanHidKlik::Bezczynny;
+                ustawBlyskLed(CZAS_BLYSKU_LED_MS);
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    if (poprzedni != StanHidKlik::Bezczynny && stanHidKlik == StanHidKlik::Bezczynny) {
+        hidKolejkaUruchomNastepne();
+    }
+}
+
 void wyslijKlikniecie(uint8_t przycisk) {
-    if (czyUSBPodlaczone()) {
-        usbMysz.press(przycisk);
-        delay(CZAS_KROTKIEGO_KLIKU_MS);
-        usbMysz.release(przycisk);
-    } else if (bleMysz.isConnected()) {
-        bleMysz.press(przycisk);
-        delay(CZAS_KROTKIEGO_KLIKU_MS);
-        bleMysz.release(przycisk);
-    }
-    ustawBlyskLed(CZAS_BLYSKU_LED_MS);
+    rozpocznijKlikniecieHid(przycisk, false);
 }
 
-/**
- * Podwójne kliknięcie lewym przyciskiem (double-click LPM).
- * Realizowane jako dwa szybkie press/release z odstępem
- * CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS, mieszczącym się w domyślnym
- * progu double-click systemu Windows (500 ms).
- */
 void wyslijPodwojnyKlikLewy() {
-    if (czyUSBPodlaczone()) {
-        usbMysz.press(MOUSE_LEFT);
-        delay(CZAS_KROTKIEGO_KLIKU_MS);
-        usbMysz.release(MOUSE_LEFT);
-        delay(CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS);
-        usbMysz.press(MOUSE_LEFT);
-        delay(CZAS_KROTKIEGO_KLIKU_MS);
-        usbMysz.release(MOUSE_LEFT);
-    } else if (bleMysz.isConnected()) {
-        bleMysz.press(MOUSE_LEFT);
-        delay(CZAS_KROTKIEGO_KLIKU_MS);
-        bleMysz.release(MOUSE_LEFT);
-        delay(CZAS_MIEDZY_KLIKAMI_PODWOJNEGO_MS);
-        bleMysz.press(MOUSE_LEFT);
-        delay(CZAS_KROTKIEGO_KLIKU_MS);
-        bleMysz.release(MOUSE_LEFT);
-    }
-    ustawBlyskLed(CZAS_BLYSKU_LED_MS);
+    rozpocznijKlikniecieHid(MOUSE_LEFT, true);
 }
 
-/**
- * Obsługa przytrzymania lewego przycisku (drag & drop).
- * wcisnij=true  → press,  dioda świeci ciągle.
- * wcisnij=false → release, dioda gaśnie.
- */
 void wyslijPrzytrzymanie(bool wcisnij) {
+    zarejestrujAktywnoscUrzadzenia();
     if (wcisnij) {
         if (czyUSBPodlaczone())         usbMysz.press(MOUSE_LEFT);
-        else if (bleMysz.isConnected()) bleMysz.press(MOUSE_LEFT);
+        else if (czyBleHidAktywne())      bleMysz.press(MOUSE_LEFT);
         if (czyDebugWlaczony) Serial.println(F("[DRAG] Przytrzymanie ON"));
-        webDebugLog("[DRAG] Przytrzymanie ON");
+        webDebugLogKategoria(WEBLOG_HID, "[DRAG] Przytrzymanie ON");
     } else {
         if (czyUSBPodlaczone())         usbMysz.release(MOUSE_LEFT);
-        else if (bleMysz.isConnected()) bleMysz.release(MOUSE_LEFT);
+        else if (czyBleHidAktywne())      bleMysz.release(MOUSE_LEFT);
         ustawBlyskLed(CZAS_BLYSKU_LED_MS);
         if (czyDebugWlaczony) Serial.println(F("[DRAG] Przytrzymanie OFF"));
-        webDebugLog("[DRAG] Przytrzymanie OFF");
+        webDebugLogKategoria(WEBLOG_HID, "[DRAG] Przytrzymanie OFF");
     }
 }
 
 // ============= PRZETWARZANIE ZLICZONYCH IMPULSÓW ===================
 
-/**
- * Wywoływana po upływie okna wielokliku, gdy czujnik jest nieaktywny.
- *
- * Mapowanie mrugnięć na akcje (HEFAS 4.0):
- *   1 mrug.  → lewy klik (LPM)
- *   2 mrug.  → podwójny lewy klik (double-click LPM, otwieranie plików)
- *   3 mrug.  → prawy klik (PPM)
- *   4 mrug.  → toggle trybu scrolla (LED ciągły gdy aktywny)
- *   5 mrug.  → rekalibracja żyroskopu (LED mruga 3×)
- *   6 mrug.  → toggle trybu debug (LED mruga 2×)
- *
- * Akcje 4–6 (sterowanie systemem) działają zawsze, niezależnie od stanu.
- * Akcje 1–3 (kliknięcia myszą) są zablokowane w trybie scrolla, aby
- * niezamierzone mrugnięcia nie generowały klików podczas scrollowania.
- */
 void przetworzImpulsy(uint8_t licznik) {
-    // --- 6 mrugnięć: przełączenie trybu debug (zawsze dostępne) ---
-    if (licznik >= 6) {
+    zarejestrujAktywnoscUrzadzenia();
+    if (licznik > MAX_MRUGNIEC_W_SERII) {
+        licznik = MAX_MRUGNIEC_W_SERII;
+    }
+
+    if (licznik == 6) {
         czyDebugWlaczony = !czyDebugWlaczony;
-        if (czyDebugWlaczony) Serial.println(F("[DEBUG] WLACZONY"));
-        webDebugLog(czyDebugWlaczony ? "[DEBUG] WLACZONY" : "[DEBUG] WYLACZONY");
-        mrugnijDioda(2, 100);
+        Serial.println(czyDebugWlaczony ? F("[DEBUG] WLACZONY") : F("[DEBUG] WYLACZONY"));
+        webDebugLogKategoria(WEBLOG_FSM, czyDebugWlaczony ? "[DEBUG] WLACZONY" : "[DEBUG] WYLACZONY");
+        rozpocznijMrugnieciaLed(2, 100);
         return;
     }
 
-    // --- 5 mrugnięć: rekalibracja żyroskopu (zawsze dostępne) ---
     if (licznik == 5) {
-        if (czyDebugWlaczony) Serial.println(F("[REKALIBRACJA] Start..."));
-        webDebugLog("[REKALIBRACJA] Start (5 mrugniec)...");
-        kalibracjaZyroskopu();
-        mrugnijDioda(3, 200);
-        if (czyDebugWlaczony) Serial.println(F("[REKALIBRACJA] Gotowe."));
-        webDebugLog("[REKALIBRACJA] Gotowe.");
+        rozpocznijKalibracje("5 mrug");
         return;
     }
 
-    // --- 4 mrugnięcia: toggle trybu scrolla (zawsze dostępne) ---
-    if (licznik == 4) {
-        trybScrolla = !trybScrolla;
+    if (trybScrolla && licznik >= 2) {
+        trybScrolla = false;
         ustawBlyskLed(CZAS_BLYSKU_LED_MS);
         if (czyDebugWlaczony) {
-            Serial.println(trybScrolla ? F("[SCROLL] ON") : F("[SCROLL] OFF"));
+            Serial.println(F("[SCROLL] OFF"));
+            webDebugLogKategoria(WEBLOG_FSM, "[SCROLL] OFF (>=2 mrug)");
         }
-        webDebugLog(trybScrolla ? "[SCROLL] ON" : "[SCROLL] OFF");
+        if (licznik == 2) return;
+    }
+
+    if (licznik == 4 && !trybScrolla) {
+        trybScrolla = true;
+        ustawBlyskLed(CZAS_BLYSKU_LED_MS);
+        if (czyDebugWlaczony) {
+            Serial.println(F("[SCROLL] ON"));
+            webDebugLogKategoria(WEBLOG_FSM, "[SCROLL] ON");
+        }
         return;
     }
 
-    // --- Kliknięcia (1–3) są blokowane w trybie scrolla ---
     if (trybScrolla) return;
 
     if (licznik == 3) {
         wyslijKlikniecie(MOUSE_RIGHT);
         licznikKlikPrawych++;
-        if (czyDebugWlaczony) Serial.println(F("[KLIK] PRAWY"));
-        webDebugLog("[KLIK] PRAWY");
+        if (czyDebugWlaczony) {
+            Serial.println(F("[KLIK] PRAWY"));
+            webDebugLogKategoria(WEBLOG_FSM, "[KLIK] PRAWY");
+        }
     } else if (licznik == 2) {
         wyslijPodwojnyKlikLewy();
         licznikKlikLewych += 2;
-        if (czyDebugWlaczony) Serial.println(F("[KLIK] DOUBLE LEWY"));
-        webDebugLog("[KLIK] DOUBLE LEWY");
+        if (czyDebugWlaczony) {
+            Serial.println(F("[KLIK] DOUBLE LEWY"));
+            webDebugLogKategoria(WEBLOG_FSM, "[KLIK] DOUBLE LEWY");
+        }
     } else if (licznik == 1) {
         wyslijKlikniecie(MOUSE_LEFT);
         licznikKlikLewych++;
-        if (czyDebugWlaczony) Serial.println(F("[KLIK] LEWY"));
-        webDebugLog("[KLIK] LEWY");
+        if (czyDebugWlaczony) {
+            Serial.println(F("[KLIK] LEWY"));
+            webDebugLogKategoria(WEBLOG_FSM, "[KLIK] LEWY");
+        }
     }
 }
 
-// ================== DETEKCJA KLIKNIĘĆ (LM393) =====================
+// ================== DETEKCJA MRUGNIĘĆ =================================
 
-/**
- * Niblokująca maszyna stanów obsługująca czujnik optyczny.
- *
- * Detekcja oparta na zliczaniu ZAKOŃCZONYCH impulsów (zbocze
- * opadające = oko otwiera się). Dzięki temu przed zliczeniem
- * można sprawdzić czas trwania impulsu:
- *
- *   - krótki impuls (<600ms) → zliczany jako kliknięcie,
- *   - długi impuls (≥600ms)  → przytrzymanie lewego przycisku
- *     (drag), zwolniony przy otwarciu oka.
- *
- * Po upływie OKNO_WIELOKLIKU_MS bez nowego impulsu zliczone
- * impulsy przetwarzane są przez przetworzImpulsy().
- */
-void obsluzKlikniecia() {
-    // Wirtualny odczyt z detektora analogowego TCRT5000 zastępuje
-    // dawne digitalRead(PIN_LM393). Mapowanie:
-    //   wirtualnyStanCzujnika == true  → odczyt = LM393_AKTYWNY_STAN  (oko zamknięte)
-    //   wirtualnyStanCzujnika == false → odczyt = !LM393_AKTYWNY_STAN (oko otwarte)
-    // Cała poniższa maszyna stanów (debounce, zliczanie wieloklików,
-    // detekcja przytrzymania) pozostaje niezmieniona.
-    bool odczyt = wirtualnyStanCzujnika ? LM393_AKTYWNY_STAN : !LM393_AKTYWNY_STAN;
-    unsigned long teraz = millis();
-
-    // --- Debounce ---
-    if (odczyt != poprzedniOdczytCzujnika) {
-        czasOstatniegoDebounce = teraz;
+static unsigned long ciszaPoLiczbieImpulsow(uint8_t n) {
+    switch (n) {
+        case 1: return (unsigned long)SERIA_CISZA_PO_1_MS;
+        case 2: return (unsigned long)SERIA_CISZA_PO_2_MS;
+        case 3: return (unsigned long)SERIA_CISZA_PO_3_MS;
+        case 4: return (unsigned long)SERIA_CISZA_PO_4_MS;
+        case 5: return (unsigned long)SERIA_CISZA_PO_5_MS;
+        default: return (unsigned long)SERIA_CISZA_PO_6_MS;
     }
-    poprzedniOdczytCzujnika = odczyt;
+}
 
-    if ((teraz - czasOstatniegoDebounce) < CZAS_DEBOUNCE_MS) return;
+static bool czySeriaCzasowoPoprawna(uint8_t licznik) {
+    if (licznik == 0 || czasPierwszegoImpulsuSerii == 0) return true;
+    unsigned long span = czasOstatniegoImpulsu - czasPierwszegoImpulsuSerii;
+    if (licznik == 3) {
+        return span >= (unsigned long)SERIA_CZAS_MIN_3_MS &&
+               span <= (unsigned long)SERIA_CZAS_MAX_3_MS;
+    }
+    if (licznik == 4) return span <= (unsigned long)SERIA_CZAS_MAX_4_MS;
+    if (licznik == 5) return span <= (unsigned long)SERIA_CZAS_MAX_5_MS;
+    if (licznik >= 6) return span <= (unsigned long)SERIA_CZAS_MAX_6_MS;
+    return true;
+}
 
-    bool aktywny    = (odczyt == LM393_AKTYWNY_STAN);
-    bool bylAktywny = (ostatniStabilnyOdczyt == LM393_AKTYWNY_STAN);
+static void zarejestrujMrugniecie(unsigned long teraz) {
+    zarejestrujAktywnoscUrzadzenia();
 
-    // --- Zbocze narastające: czujnik staje się aktywny (oko zamyka się) ---
-    if (aktywny && !bylAktywny) {
-        ostatniStabilnyOdczyt = odczyt;
-        czasStartImpulsu = teraz;
+    if (licznikImpulsow > 0) {
+        ostatniaPrzerwaMiedzyImpulsamiMs = teraz - czasOstatniegoImpulsu;
+    }
+
+    if (licznikImpulsow > 0 &&
+        (teraz - czasOstatniegoImpulsu) <= (unsigned long)OKNO_MIEDZY_IMPULSAMI_MS) {
+        if (licznikImpulsow < MAX_MRUGNIEC_W_SERII) {
+            licznikImpulsow++;
+        }
+    } else {
+        licznikImpulsow           = 1;
+        czasPierwszegoImpulsuSerii = teraz;
+        ostatniaPrzerwaMiedzyImpulsamiMs = 0;
+    }
+
+    czasOstatniegoImpulsu    = teraz;
+    seriaMrugniecAktywna     = true;
+    if (CZAS_REFRAKTORY_PO_IMPULSIE_MS > 0) {
+        czasKoniecRefrakcjiMrug = teraz + (unsigned long)CZAS_REFRAKTORY_PO_IMPULSIE_MS;
+    }
+    deadlineKoniecSeriiMs    = teraz + ciszaPoLiczbieImpulsow(licznikImpulsow);
+}
+
+static void obsluzZboczeOtwarciaOka(unsigned long teraz) {
+    if (przytrzymanieAktywne) {
+        przytrzymanieAktywne = false;
+        wyslijPrzytrzymanie(false);
         return;
     }
 
-    // --- Czujnik ciągle aktywny: sprawdź próg przytrzymania ---
-    if (aktywny && bylAktywny && !przytrzymanieAktywne && !trybScrolla) {
-        if ((teraz - czasStartImpulsu) >= PROG_PRZYTRZYMANIA_MS) {
+    unsigned long czasTrwania = teraz - czasStartImpulsu;
+    if (czasTrwania < (unsigned long)CZAS_MIN_MRUG_MS) {
+        if (czyDebugWlaczony) {
+            String msg = "[TCRT] Artefakt odrzucony (";
+            msg += (int)czasTrwania;
+            msg += "ms)";
+            webDebugLogKategoria(WEBLOG_FSM, msg);
+        }
+        return;
+    }
+
+    if (czasTrwania >= (unsigned long)PROG_PRZYTRZYMANIA_MS) {
+        return;
+    }
+
+    if (czasTrwania > (unsigned long)CZAS_MAX_MRUG_MS) {
+        if (czyDebugWlaczony) {
+            webDebugLogKategoria(WEBLOG_FSM,
+                String("[TCRT] Dlugie zamkniecie (") + (int)czasTrwania
+                + "ms) — bez mrugniecia (strefa drag)");
+        }
+        return;
+    }
+
+    zarejestrujMrugniecie(teraz);
+}
+
+static void sprawdzTimeoutSerii(unsigned long teraz) {
+    if (!seriaMrugniecAktywna || licznikImpulsow == 0) return;
+    if (okoPotwierdzoneZamkniete) return;
+    if (deadlineKoniecSeriiMs == 0 || teraz < deadlineKoniecSeriiMs) return;
+
+    uint8_t doPrzetworzenia = licznikImpulsow;
+
+    if (!czySeriaCzasowoPoprawna(doPrzetworzenia)) {
+        if (czyDebugWlaczony) {
+            unsigned long span = czasOstatniegoImpulsu - czasPierwszegoImpulsuSerii;
+            String msg = "[SERIA] ";
+            msg += (int)doPrzetworzenia;
+            msg += " odrzucone (czas ";
+            msg += (int)span;
+            msg += "ms)";
+            Serial.println(msg);
+            webDebugLogKategoria(WEBLOG_FSM, msg);
+        }
+        licznikImpulsow              = 0;
+        seriaMrugniecAktywna         = false;
+        deadlineKoniecSeriiMs        = 0;
+        czasPierwszegoImpulsuSerii   = 0;
+        ostatniaPrzerwaMiedzyImpulsamiMs = 0;
+        return;
+    }
+
+    if (czyDebugWlaczony) {
+        unsigned long span = (czasPierwszegoImpulsuSerii > 0)
+                             ? (czasOstatniegoImpulsu - czasPierwszegoImpulsuSerii) : 0;
+        String seriaMsg = "[SERIA] ";
+        seriaMsg += (int)doPrzetworzenia;
+        seriaMsg += " impulsow T=";
+        seriaMsg += (int)span;
+        seriaMsg += "ms przerwa=";
+        seriaMsg += (int)ostatniaPrzerwaMiedzyImpulsamiMs;
+        seriaMsg += "ms";
+        Serial.println(seriaMsg);
+        webDebugLogKategoria(WEBLOG_FSM, seriaMsg);
+    }
+    licznikImpulsow              = 0;
+    seriaMrugniecAktywna         = false;
+    deadlineKoniecSeriiMs        = 0;
+    czasPierwszegoImpulsuSerii   = 0;
+    ostatniaPrzerwaMiedzyImpulsamiMs = 0;
+    przetworzImpulsy(doPrzetworzenia);
+}
+
+void obsluzKlikniecia() {
+    if (!systemGotowy) return;
+
+    unsigned long teraz = millis();
+
+    if (wirtualnyStanCzujnika) {
+        licznikProbekZamknietych++;
+        licznikProbekOtwartych = 0;
+    } else {
+        licznikProbekOtwartych++;
+        licznikProbekZamknietych = 0;
+    }
+
+    if (!okoPotwierdzoneZamkniete &&
+        licznikProbekZamknietych >= PROBKI_POTWIERDZENIA_STANU) {
+        if (CZAS_REFRAKTORY_PO_IMPULSIE_MS > 0 && teraz < czasKoniecRefrakcjiMrug) {
+            licznikProbekZamknietych = 0;
+        } else {
+        okoPotwierdzoneZamkniete = true;
+        czasStartImpulsu         = teraz;
+        licznikProbekOtwartych   = 0;
+        }
+    } else if (okoPotwierdzoneZamkniete &&
+               licznikProbekOtwartych >= (przytrzymanieAktywne
+                   ? (uint8_t)PROBKI_POTWIERDZENIA_DRAG_OFF
+                   : (uint8_t)PROBKI_POTWIERDZENIA_STANU)) {
+        obsluzZboczeOtwarciaOka(teraz);
+        okoPotwierdzoneZamkniete  = false;
+        licznikProbekZamknietych  = 0;
+    } else if (okoPotwierdzoneZamkniete && !przytrzymanieAktywne && !trybScrolla) {
+        if ((teraz - czasStartImpulsu) >= (unsigned long)PROG_PRZYTRZYMANIA_MS) {
             przytrzymanieAktywne = true;
             wyslijPrzytrzymanie(true);
-            licznikImpulsow = 0;
+            licznikImpulsow              = 0;
+            seriaMrugniecAktywna         = false;
+            deadlineKoniecSeriiMs        = 0;
+            czasPierwszegoImpulsuSerii   = 0;
+            ostatniaPrzerwaMiedzyImpulsamiMs = 0;
         }
     }
 
-    // --- Zbocze opadające: czujnik staje się nieaktywny (oko otwiera się) ---
-    if (!aktywny && bylAktywny) {
-        ostatniStabilnyOdczyt = odczyt;
-
-        if (przytrzymanieAktywne) {
-            przytrzymanieAktywne = false;
-            wyslijPrzytrzymanie(false);
-            return;
-        }
-
-        // Filtr minimalnego czasu mrugnięcia: odrzucamy impulsy krótsze niż
-        // CZAS_MIN_MRUG_MS. Ruchy głowy powodują krótkie artefakty sygnału
-        // (<80ms), natomiast prawdziwe mrugnięcia trwają 100-400ms.
-        // Dzięki temu fałszywe kliknięcia od ruchów głowy są ignorowane.
-        unsigned long czasTrwania = teraz - czasStartImpulsu;
-        if (czasTrwania < CZAS_MIN_MRUG_MS) {
-            if (czyDebugWlaczony) {
-                String msg = "[TCRT] Artefakt odrzucony (";
-                msg += (int)czasTrwania;
-                msg += "ms < min ";
-                msg += CZAS_MIN_MRUG_MS;
-                msg += "ms)";
-                webDebugLog(msg);
-            }
-            return;
-        }
-
-        if (licznikImpulsow > 0 &&
-            (teraz - czasOstatniegoImpulsu) <= OKNO_WIELOKLIKU_MS) {
-            licznikImpulsow++;
-        } else {
-            licznikImpulsow = 1;
-        }
-        czasOstatniegoImpulsu = teraz;
-    }
-
-    // --- Timeout: okno wielokliku upłynęło → przetwórz impulsy ---
-    if (licznikImpulsow > 0 && !aktywny &&
-        (teraz - czasOstatniegoImpulsu) > OKNO_WIELOKLIKU_MS) {
-        przetworzImpulsy(licznikImpulsow);
-        licznikImpulsow = 0;
-    }
+    sprawdzTimeoutSerii(teraz);
 }
 
 // ======================== DIAGNOSTYKA ==============================
@@ -882,30 +1138,33 @@ void diagnostyka() {
     if (!czyDebugWlaczony) return;
 
     unsigned long teraz = millis();
-    if ((teraz - ostatniCzasDiagnostyki) < OKRES_DIAGNOSTYKI_MS) return;
+    if ((teraz - ostatniCzasDiagnostyki) < (unsigned long)OKRES_DIAGNOSTYKI_MS) return;
     ostatniCzasDiagnostyki = teraz;
 
-    // --- 1. Sygnał detektora TCRT5000 — wypisujemy zawsze, gdy debug ---
     String tcrtMsg = "[TCRT] Raw=";
     tcrtMsg += tcrtRaw;
-    tcrtMsg += "  Filt=";
-    tcrtMsg += (int)tcrtFiltered;
+    tcrtMsg += "  Fast=";
+    tcrtMsg += (int)tcrtFast;
     tcrtMsg += "  Base=";
     tcrtMsg += (int)tcrtBaseline;
     tcrtMsg += wirtualnyStanCzujnika ? "  [ZAMKN]" : "  [OTW]";
+    tcrtMsg += okoPotwierdzoneZamkniete ? "  [POTW]" : "";
     Serial.println(tcrtMsg);
-    webDebugLog(tcrtMsg);
+    webDebugLogKategoria(WEBLOG_IR, tcrtMsg);
 
-    // --- 2. Ruch myszy — tylko gdy nie jest zerowy ---
     if (kursorDeltaX == 0 && kursorDeltaY == 0) return;
 
     String msg = trybScrolla ? "[SCROLL] " : "[RUCH] ";
     msg += "dX="; msg += kursorDeltaX;
     msg += "  dY="; msg += kursorDeltaY;
-    msg += "  ["; msg += czyUSBPodlaczone() ? "USB" : "BLE"; msg += "]";
+    msg += "  [";
+    if (czyUSBPodlaczone())      msg += "USB";
+    else if (czyBleHidAktywne()) msg += "BLE";
+    else                         msg += "---";
+    msg += "]";
 
     Serial.println(msg);
-    webDebugLog(msg);
+    webDebugLogKategoria(WEBLOG_GYRO, msg);
 }
 
 // ============================ SETUP ================================
@@ -916,6 +1175,8 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
 
+    delay(CZAS_STABILIZACJI_START_MS);
+
     if (czyDebugWlaczony) {
         Serial.println();
         Serial.println(F("============================================"));
@@ -924,46 +1185,44 @@ void setup() {
     }
 
     Wire.begin(PIN_SDA, PIN_SCL);
-    Wire.setClock(400000);     // I²C Fast Mode 400 kHz (MPU6050 obsługuje)
+    Wire.setClock(400000);
     czujnikIMU.initialize();
 
     if (!czujnikIMU.testConnection()) {
         if (czyDebugWlaczony) Serial.println(F("[BLAD] MPU6050 brak odpowiedzi!"));
-        while (true) { mrugnijDioda(5, 100); delay(500); }
+        while (true) { mrugnijDiodaBlokujaco(5, 100); delay(500); }
     }
     if (czyDebugWlaczony) Serial.println(F("[OK] MPU6050 polaczony."));
 
-    // Równoległa kalibracja żyroskopu + TCRT5000 (~2 s, LED świeci ciągle).
-    // analogReadResolution(12) jest wywoływane wewnątrz kalibracjaSystemu() —
-    // w niektórych wersjach Arduino-ESP32 resetuje atenuację wszystkich pinów ADC.
-    // Dlatego ADC_0db dla pinu baterii ustawiamy DOPIERO PO kalibracji.
-    kalibracjaSystemu();
-
-    initOdczytBaterii();
+    rozpocznijKalibracje("start");
 
     usbMysz.begin();
+    usbKlaw.begin();
     USB.begin();
-    if (czyDebugWlaczony) Serial.println(F("[OK] USB HID Mouse."));
+    if (czyDebugWlaczony) Serial.println(F("[OK] USB HID Mouse + Keyboard."));
 
-    bleMysz.begin();
-    if (czyDebugWlaczony) Serial.println(F("[OK] BLE Mouse."));
+#if defined(PIN_VBUS_ADC)
+    pinMode(PIN_VBUS_ADC, INPUT);
+#endif
+    odswiezStatusZasilaniaWew();
 
     webDebugInit();
-    initOdczytBaterii();   // ponownie po starcie WiFi AP
 
-    mrugnijDioda(3, 200);
+    odswiezSterowanieBle();
+#if CONFIG_BT_ENABLED
+    if (!czyUSBPodlaczone() && !bleRadioWlaczony) {
+        wlaczReklameBle();
+    }
+#endif
 
     if (czyDebugWlaczony) {
-        Serial.println(F("============================================"));
-        Serial.println(F("  HEFAS 4.0 GOTOWY"));
-        Serial.println(F("  1 mrug  = LPM"));
-        Serial.println(F("  2 mrug  = double-click LPM"));
-        Serial.println(F("  3 mrug  = PPM"));
-        Serial.println(F("  4 mrug  = toggle scrolla (LED ON/OFF)"));
-        Serial.println(F("  5 mrug  = rekalibracja zyroskopu"));
-        Serial.println(F("  6 mrug  = toggle trybu debug"));
-        Serial.println(F("  dlugie  = przytrzymanie (drag & drop)"));
-        Serial.println(F("============================================"));
+        Serial.printf("[OK] Zasil: HID=%s USB=%s Ogniwo=%s\n",
+                      statusUsbHidAktywny ? "TAK" : "nie",
+                      statusUsbKabelAktywny ? "TAK" : "nie",
+                      statusOgniwoMontowane ? "TAK" : "nie");
+        Serial.println(bleRadioWlaczony
+                       ? F("[OK] BLE: reklama ON")
+                       : F("[OK] BLE: OFF (USB-HID aktywne)"));
     }
 }
 
@@ -975,22 +1234,23 @@ void loop() {
 #if WEBDEBUG_AKTYWNY
     if (webZadanieRekalibracji) {
         webZadanieRekalibracji = false;
-        webDebugLog("[REKALIBRACJA] Start z WWW...");
-        kalibracjaZyroskopu();
-        mrugnijDioda(3, 200);
-        webDebugLog("[REKALIBRACJA] Gotowe.");
+        rozpocznijKalibracje("WebDebug");
     }
 #endif
 
     odczytajIMU();
+    obsluzGestPrzechylenia();
+    odswiezGestKlawiatury();
     aktualizujDetektorTCRT();
-    odczytajPoziomBaterii();
+    odswiezSterowanieBle();
+    odswiezKalibracje();
+    odswiezHidKlikniecia();
 
 #if WEBDEBUG_AKTYWNY
     if (!webPauzaMyszy) {
 #endif
         obsluzKlikniecia();
-        if (kursorDeltaX != 0 || kursorDeltaY != 0) {
+        if (!hidKlikZajety() && (kursorDeltaX != 0 || kursorDeltaY != 0)) {
             wyslijRuchMyszy(kursorDeltaX, kursorDeltaY);
         }
 #if WEBDEBUG_AKTYWNY
@@ -1001,35 +1261,3 @@ void loop() {
     diagnostyka();
     delay(OKRES_PETLI_MS);
 }
-
-/**
- * ============================================================
- *  RAPORT KOŃCOWY – HEFAS 4.0
- * ============================================================
- *
- *  include/hefas_config.h
- *    Piny, czułość, progi filtracji, parametry mrugnięć/scrolla,
- *    parametry detektora analogowego TCRT5000.
- *
- *  src/main.cpp  (ten plik)
- *    - autokalibracja żyroskopu (200 próbek),
- *    - mapowanie: gx→X, gz→Y (empiryczne),
- *    - podwójna filtracja (próg szumu + strefa martwa),
- *    - detektor TCRT5000: analogReadResolution(12) + EMA + histereza
- *      + pływające tło (kompensacja dryfu optycznego),
- *    - kalibracja TCRT trimmed-mean (odrzut 10% skrajnych próbek),
- *    - mapowanie mrugnięć:
- *        1 mrug. = lewy klik (LPM),
- *        2 mrug. = double-click LPM (otwieranie plików),
- *        3 mrug. = prawy klik (PPM),
- *        4 mrug. = toggle trybu scrolla (dioda świeci ciągle),
- *        5 mrug. = rekalibracja żyroskopu (dioda mruga 3×),
- *        6 mrug. = toggle trybu debug (dioda mruga 2×),
- *    - długie zamknięcie oka (≥PROG_PRZYTRZYMANIA_MS) = drag & drop,
- *    - press/release zamiast click(),
- *    - runtime'owa flaga czyDebugWlaczony – domyślnie OFF (mniejsze
- *      zużycie energii), włączana sekwencją 6 mrugnięć,
- *    - USB HID > BLE (automatyczny priorytet).
- *
- * ============================================================
- */
