@@ -278,29 +278,29 @@ Wpisy trafiają też do WebDebug zgodnie z maską filtrów (szczegóły mrugnię
 
 ## Architektura
 
-Firmware działa **w pełni asynchronicznie** (`millis()`). Pętla główna: **100 Hz** (10 ms). Poniżej szczegółowe schematy od ogółu do szczegółu — **białe tło**, kolory według typu bloku (legenda na końcu sekcji).
+Firmware działa **w pełni asynchronicznie** (licznik czasu w milisekundach). Pętla główna: **100 Hz** (co 10 ms). Poniżej schematy od ogółu do szczegółu — **etykiety po polsku** (bez nazw funkcji z kodu), **białe tło**, kolory według typu bloku (legenda na końcu sekcji).
 
 ### 1. Mapa systemu (z czego składa się HEFAS)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':40,'rankSpacing':50}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":40,"rankSpacing":50}}}%%
 flowchart LR
     subgraph WEJ["Wejścia"]
-        IMU["MPU6050<br/>Gx, Gy, Gz"]
-        IR["TCRT5000<br/>ADC A1"]
-        WEB["WebDebug WiFi<br/>192.168.4.1"]
-        USBIN["USB-C<br/>zasilanie + HID"]
+        IMU["MPU6050<br/>żyroskop Gx, Gy, Gz"]
+        IR["TCRT5000<br/>czujnik powieki"]
+        WEB["Panel WiFi<br/>192.168.4.1"]
+        USBIN["USB-C<br/>zasilanie i mysz"]
     end
 
-    subgraph MCU["ESP32-S3 — main.cpp"]
-        LOOP["Pętla 100 Hz"]
+    subgraph MCU["ESP32-S3 — program główny"]
+        LOOP["Pętla 100 razy na sekundę"]
     end
 
     subgraph WYJ["Wyjścia"]
-        HID["USB HID<br/>mysz + klawiatura"]
-        BLE["BLE Mouse"]
-        LED["LED status"]
-        LOG["Serial + log WebDebug"]
+        HID["Mysz przez USB"]
+        BLE["Mysz przez Bluetooth"]
+        LED["Dioda statusu"]
+        LOG["Logi Serial i panel WWW"]
     end
 
     IMU --> LOOP
@@ -318,20 +318,20 @@ flowchart LR
     class LOOP core
 ```
 
-### 2. Uruchomienie (`setup()`)
+### 2. Uruchomienie przy starcie
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':55}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":55}}}%%
 flowchart TD
-    S([Start urządzenia]) --> SER[Serial 115200]
-    SER --> I2C[MPU6050 I2C — test połączenia]
-    I2C -->|błąd| BLINK[LED miga — halt]
-    I2C -->|OK| KAL0["rozpocznijKalibracje start<br/>~3 s async"]
-    KAL0 --> USB["USB HID: mysz + klawiatura<br/>USB.begin"]
-    USB --> ZAS0[odswiezStatusZasilania]
-    ZAS0 --> WD[webDebugInit — AP HEFAS-Debug]
-    WD --> BLE0[odswiezSterowanieBle — reklama jeśli brak USB-HID]
-    BLE0 --> E([Wejście w loop])
+    S([Włączenie urządzenia]) --> SER[Port szeregowy 115200]
+    SER --> I2C[Sprawdzenie żyroskopu MPU6050]
+    I2C -->|błąd| BLINK[Dioda miga — zatrzymanie]
+    I2C -->|OK| KAL0["Kalibracja przy starcie<br/>ok. 3 sekundy"]
+    KAL0 --> USB["Uruchomienie myszy USB"]
+    USB --> ZAS0[Sprawdzenie zasilania]
+    ZAS0 --> WD["WiFi punkt dostępowy<br/>HEFAS-Debug"]
+    WD --> BLE0["Bluetooth — reklama<br/>gdy brak USB"]
+    BLE0 --> E([Wejście w pętlę główną])
 
     classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
     classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
@@ -341,17 +341,17 @@ flowchart TD
     class BLINK bad
 ```
 
-### 3. Pętla główna (`loop()` — każde 10 ms)
+### 3. Pętla główna (co 10 ms)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':60}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":60}}}%%
 flowchart TD
-    START([Nowa iteracja]) --> W1
+    START([Kolejna iteracja]) --> W1
 
-    subgraph WEBDBG["WebDebug"]
-        W1[webDebugLoop — panel HTTP]
-        W2{Przycisk REKALIBRACJA?}
-        W3[rozpocznijKalibracje WebDebug]
+    subgraph WEBDBG["Panel diagnostyczny WWW"]
+        W1[Obsługa strony WWW]
+        W2{Przycisk rekalibracji?}
+        W3[Kalibracja z panelu]
         W1 --> W2
         W2 -->|tak| W3
     end
@@ -360,32 +360,32 @@ flowchart TD
     W3 --> S1
 
     subgraph SENS["Sensory i gest"]
-        S1[odczytajIMU]
-        S2[obsluzGestPrzechylenia]
-        S3[odswiezGestKlawiatury]
-        S4[aktualizujDetektorTCRT]
+        S1[Odczyt żyroskopu]
+        S2[Wykrywanie gestu przechyłu]
+        S3[Zwolnienie klawiszy gestu]
+        S4[Odczyt czujnika powieki]
         S1 --> S2 --> S3 --> S4
     end
 
     S4 --> Y1
 
     subgraph SYS["System"]
-        Y1[odswiezSterowanieBle]
-        Y2[odswiezKalibracje]
-        Y3[odswiezHidKlikniecia — kolejka 4 zadań]
+        Y1[Obsługa USB i Bluetooth]
+        Y2[Postęp kalibracji]
+        Y3[Kolejka kliknięć myszy]
         Y1 --> Y2 --> Y3
     end
 
-    Y3 --> PAUZA{webPauzaMyszy?}
+    Y3 --> PAUZA{Mysz wstrzymana?}
 
     PAUZA -->|nie| A1
     PAUZA -->|tak| L1
 
-    subgraph ACT["Akcje użytkownika — gdy !pauza"]
-        A1[obsluzKlikniecia]
-        A2{delty != 0 i !hidKlikZajety?}
-        A3[wyslijRuchMyszy]
-        A4[bez ruchu]
+    subgraph ACT["Akcje użytkownika — gdy mysz aktywna"]
+        A1[Obsługa mrugnięć]
+        A2{Jest ruch głowy<br/>i brak kliknięcia w trakcie?}
+        A3[Przesuń kursor]
+        A4[Bez ruchu kursora]
         A1 --> A2
         A2 -->|tak| A3
         A2 -->|nie| A4
@@ -395,9 +395,9 @@ flowchart TD
     A4 --> L1
 
     subgraph KONIEC["Koniec iteracji"]
-        L1[odswiezLed]
-        L2[diagnostyka — tylko Debug ON]
-        L3[delay 10 ms]
+        L1[Odśwież diodę statusu]
+        L2[Logi szczegółowe — tylko tryb Debug]
+        L3[Odczekaj 10 ms]
         L1 --> L2 --> L3
     end
 
@@ -411,31 +411,31 @@ flowchart TD
     class W2,PAUZA,A2 decision
 ```
 
-### 4. Ruch głowy i gest (IMU)
+### 4. Ruch głowy i gest
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':55}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":55}}}%%
 flowchart TD
-    R([odczytajIMU]) --> OFF[Odejmij offset z kalibracji]
-    OFF --> BLEW[probujProbudzicBleRuchem — budzenie BLE ze snu]
-    BLEW --> PROGX{Gx powyżej progu?}
-    PROGX -->|nie| GX0[Gx = 0]
-    PROGX -->|tak| GX1[Gx zostaje]
+    R([Odczyt żyroskopu]) --> OFF[Odejmij offset z kalibracji]
+    OFF --> BLEW[Obudź Bluetooth ruchem głowy]
+    BLEW --> PROGX{Obrót w bok Gx<br/>powyżej progu?}
+    PROGX -->|nie| GX0[Ignoruj ruch w bok]
+    PROGX -->|tak| GX1[Zachowaj ruch w bok]
     GX0 --> PROGZ
-    GX1 --> PROGZ{Gz powyżej progu?<br/>w scrollu: wyższy próg 3 deg/s}
-    PROGZ -->|nie| GZ0[Gz = 0]
-    PROGZ -->|tak| GZ1[Gz zostaje]
+    GX1 --> PROGZ{Kiwanie Gz<br/>powyżej progu?<br/>w scrollu: wyższy próg}
+    PROGZ -->|nie| GZ0[Ignoruj kiwanie]
+    PROGZ -->|tak| GZ1[Zachowaj kiwanie]
     GZ0 --> MARTWA
-    GZ1 --> MARTWA[Strefa martwa 2 deg/s — zeruj małe wartości]
-    MARTWA --> DELTA["kursorDeltaX/Y<br/>× CZULOSC_MYSZY 0,4"]
-    DELTA --> G([obsluzGestPrzechylenia — oś Gy])
+    GZ1 --> MARTWA[Usuń bardzo małe ruchy]
+    MARTWA --> DELTA["Przelicz na ruch kursora<br/>czułość 0,4"]
+    DELTA --> G([Gest przechyłu głowy])
 
-    G --> GOK{system gotowy<br/>i oko otwarte<br/>i !pauza?}
-    GOK -->|nie| GKON([odswiezGestKlawiatury])
-    GOK -->|tak| GY{Przechył PRAWO Gy<br/>poniżej -40 deg/s<br/>ok. 280 ms?}
-    GY -->|tak| OSK{USB-HID?}
-    OSK -->|tak| KBD[Ctrl+Win+O — klawiatura ekranu]
-    OSK -->|nie| BLEONLY[tylko log — BLE bez klawiatury]
+    G --> GOK{System gotowy<br/>oko otwarte<br/>mysz aktywna?}
+    GOK -->|nie| GKON([Zwolnij klawisze gestu])
+    GOK -->|tak| GY{Przechył w prawo<br/>poniżej −40°/s<br/>ok. 280 ms?}
+    GY -->|tak| OSK{Połączenie USB?}
+    OSK -->|tak| KBD[Skrót Ctrl+Win+O<br/>klawiatura ekranu]
+    OSK -->|nie| BLEONLY[Tylko log — Bluetooth bez klawiatury]
     GY -->|nie| GKON
     KBD --> GKON
     BLEONLY --> GKON
@@ -450,22 +450,22 @@ flowchart TD
     class BLEONLY io
 ```
 
-### 5. Zasilanie, USB i BLE
+### 5. Zasilanie, USB i Bluetooth
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':55}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":55}}}%%
 flowchart TD
-    Z([odswiezSterowanieBle]) --> ST[odswiezStatusZasilania]
-    ST --> FL["Flagi: USB-HID, kabel USB,<br/>ogniwo BAT+, ładowanie<br/>(brak pomiaru % baterii)"]
+    Z([Obsługa Bluetooth i zasilania]) --> ST[Odczyt stanu zasilania]
+    ST --> FL["Stan: USB aktywny, kabel,<br/>bateria, ładowanie<br/>bez procentu naładowania"]
     FL --> CHG{Zapisano zmianę?}
-    CHG -->|tak| LOGZ["log ZAS — WebDebug"]
+    CHG -->|tak| LOGZ[Log zasilania w panelu WWW]
     CHG -->|nie| USBCHK
-    LOGZ --> USBCHK{Host widzi USB-HID?}
+    LOGZ --> USBCHK{Komputer widzi mysz USB?}
 
-    USBCHK -->|tak| OFF[wylaczReklameBle]
-    USBCHK -->|nie| CON{BLE połączony<br/>lub aktywność &lt; 5 min?}
-    CON -->|tak| ON[wlaczReklameBle]
-    CON -->|nie| SLEEP[BLE SLEEP — reklama OFF]
+    USBCHK -->|tak| OFF[Wyłącz widoczność Bluetooth]
+    USBCHK -->|nie| CON{Bluetooth połączony<br/>lub aktywność &lt; 5 min?}
+    CON -->|tak| ON[Włącz widoczność Bluetooth]
+    CON -->|nie| SLEEP[Uśpij Bluetooth]
 
     classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
     classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
@@ -475,24 +475,24 @@ flowchart TD
     class CHG,USBCHK,CON decision
 ```
 
-### 6. Kalibracja async (MPU + TCRT)
+### 6. Kalibracja (żyroskop + czujnik powieki)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':55}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b","noteBkgColor":"#f8fafc","noteTextColor":"#475569"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":55}}}%%
 flowchart TD
-    KTRIG["Start: boot / 5 mrug / WebDebug"] -.-> K0
-    K0([rozpocznijKalibracje]) --> K1["trwaKalibracja = true<br/>log KAL Start"]
+    KTRIG["Start: włączenie / 5 mrugnięć / panel WWW"] -.-> K0
+    K0([Rozpocznij kalibrację]) --> K1["Flaga: kalibracja trwa<br/>log Start"]
     K1 --> T1
 
-    subgraph TICK["odswiezKalibracje co 10 ms"]
-        T1["200 próbek: MPU offset + TCRT"]
-        T2["~1 s stabilizacja IR"]
-        T3[zakonczKalibracje]
+    subgraph TICK["Wykonywane co 10 ms"]
+        T1["200 próbek: offset żyroskopu i czujnika"]
+        T2["Ok. 1 s stabilizacja czujnika"]
+        T3[Zakończ kalibrację]
         T1 --> T2 --> T3
     end
 
-    T3 --> K4["Baseline TCRT · offsety żyro<br/>systemGotowy · LED 3 mrug"]
-    K4 --> KON([Koniec])
+    T3 --> K4["Nowy poziom powieki · offsety<br/>system gotowy · dioda 3× mrug"]
+    K4 --> KON([Koniec kalibracji])
 
     classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
     classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
@@ -502,26 +502,26 @@ flowchart TD
     class KTRIG trigger
 ```
 
-### 7. Detektor TCRT5000
+### 7. Detektor powieki TCRT5000
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':55}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b","noteBkgColor":"#f8fafc","noteTextColor":"#475569"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":55}}}%%
 flowchart TD
-    A([aktualizujDetektorTCRT]) --> ADC[Odczyt ADC 12-bit]
-    ADC --> EMA["Filtry EMA:<br/>tcrtFast α=0,5 · tcrtFiltered α=0,2"]
+    A([Odczyt czujnika powieki]) --> ADC[Próbka sygnału 12-bit]
+    ADC --> EMA["Wygładzenie sygnału<br/>szybkie i wolne"]
 
-    EMA --> OTW{wirtualnyStan OTWARTE?}
+    EMA --> OTW{Oko otwarte?}
 
-    OTW -->|tak| TRIG{Fast poniżej Trigger<br/>i powyżej Max-Zwarcia?}
-    TRIG -->|tak| ZAM[Ustaw ZAMKNIĘTE]
-    TRIG -->|nie| FRZ{Baseline zamrożony?}
-    FRZ -->|nie| ADAPT["Wolna adaptacja Baseline<br/>α = 0,003"]
+    OTW -->|tak| TRIG{Sygnał spadł — mrugnięcie?}
+    TRIG -->|tak| ZAM[Ustaw: oko zamknięte]
+    TRIG -->|nie| FRZ{Poziom bazowy zamrożony?}
+    FRZ -->|nie| ADAPT[Wolna korekta poziomu spoczynku]
     FRZ -->|tak| KON
 
-    OTW -->|nie| REL{Fast powyżej Release?}
-    REL -->|tak| OOTW[Ustaw OTWARTE]
-    REL -->|nie| MECH{Fast poniżej Max-Zwarcia?}
-    MECH -->|tak| MECHR["Zdarzenie mechaniczne<br/>reset do OTWARTE"]
+    OTW -->|nie| REL{Sygnał wzrósł — otwarcie?}
+    REL -->|tak| OOTW[Ustaw: oko otwarte]
+    REL -->|nie| MECH{Sygnał bardzo niski?}
+    MECH -->|tak| MECHR[Reset — oko otwarte]
     MECH -->|nie| KON
 
     ZAM --> KON([Koniec])
@@ -529,7 +529,7 @@ flowchart TD
     OOTW --> KON
     MECHR --> KON
 
-    NOTE["Baseline zamrożony:<br/>seria mrugnięć, drag, oko zamknięte"] -.-> FRZ
+    NOTE["Poziom zamrożony gdy:<br/>seria mrugnięć, przeciąganie, oko zamknięte"] -.-> FRZ
 
     classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
     classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
@@ -544,43 +544,43 @@ flowchart TD
 ### 8. Mrugnięcia — od sygnału do kliknięcia
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':55}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":55}}}%%
 flowchart TD
-    M0([obsluzKlikniecia]) --> RDY{systemGotowy?}
-    RDY -->|nie| MX([return])
+    M0([Obsługa mrugnięć]) --> RDY{System skalibrowany?}
+    RDY -->|nie| MX([Koniec])
     RDY -->|tak| CNT["Co 10 ms: licz próbki<br/>otwarte / zamknięte"]
 
-    CNT --> C1{>=2 probki ZAMKN<br/>i niepotwierdzone?}
-    C1 -->|tak| CS[czasStartImpulsu]
-    C1 -->|nie| C2{>=N probek OTWART<br/>po zamknięciu?}
+    CNT --> C1{Zamknięcie oka<br/>potwierdzone?}
+    C1 -->|tak| CS[Zapisz czas zamknięcia]
+    C1 -->|nie| C2{Otwarcie po zamknięciu?}
 
-    C2 -->|tak| EDGE[obsluzZboczeOtwarciaOka]
+    C2 -->|tak| EDGE[Obsłuż otwarcie oka]
     C2 -->|nie| C3{Oko zamknięte<br/>ponad 850 ms?}
-    C3 -->|tak| DRG[DRAG — LPM press]
+    C3 -->|tak| DRG[Przeciąganie — wciśnij LPM]
     C3 -->|nie| TM
 
-    EDGE --> E1{Był aktywny DRAG?}
-    E1 -->|tak| DRGOFF[DRAG OFF]
+    EDGE --> E1{Było przeciąganie?}
+    E1 -->|tak| DRGOFF[Puść przycisk]
     E1 -->|nie| E2{Czas zamknięcia}
-    E2 -->|mniej niz 42 ms| ART[Odrzuć szum]
-    E2 -->|42 do 280 ms| REG[zarejestrujMrugniecie]
+    E2 -->|mniej niż 42 ms| ART[Odrzuć szum]
+    E2 -->|42 do 280 ms| REG[Dodaj mrugnięcie do serii]
     E2 -->|280 do 850 ms| STREFA[Strefa bez kliku]
-    E2 -->|wiecej niz 850 ms| STREFA
+    E2 -->|więcej niż 850 ms| STREFA
 
-    REG --> REGD["OKNO 600 ms między otwarciami<br/>cisza po N: 350…1000 ms"]
+    REG --> REGD["Okno 600 ms między otwarciami<br/>cisza po N: 350…1000 ms"]
 
     CS --> TM
     DRG --> TM
     DRGOFF --> TM
     ART --> TM
     STREFA --> TM
-    REGD --> TM[sprawdzTimeoutSerii]
+    REGD --> TM[Sprawdź pauzę w serii]
 
-    TM --> T1{Oko OTWARTE<br/>i minęła cisza?}
+    TM --> T1{Oko otwarte<br/>i minęła cisza?}
     T1 -->|nie| MX
-    T1 -->|tak| T2{Czas serii OK?<br/>3x: 120-1300 ms}
+    T1 -->|tak| T2{Czas serii poprawny?<br/>3×: 120–1300 ms}
     T2 -->|nie| DROP[Odrzuć serię]
-    T2 -->|tak| ACT[przetworzImpulsy]
+    T2 -->|tak| ACT[Wykonaj akcję mrugnięcia]
     DROP --> MX
     ACT --> MX
 
@@ -594,42 +594,42 @@ flowchart TD
     class ART,STREFA,DROP warn
 ```
 
-### 9. Akcje po serii mrugnięć (`przetworzImpulsy`)
+### 9. Akcje po serii mrugnięć
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':35,'rankSpacing':55}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":35,"rankSpacing":55}}}%%
 flowchart TD
-    P([licznik N]) --> S6{N = 6?}
-    S6 -->|tak| DBG[Przełącz Debug ON/OFF]
+    P([Liczba mrugnięć N]) --> S6{N = 6?}
+    S6 -->|tak| DBG[Przełącz tryb Debug]
     S6 -->|nie| S5{N = 5?}
-    S5 -->|tak| K5[Rekalibracja MPU + TCRT]
-    S5 -->|nie| SCR{Scroll ON i N >= 2?}
+    S5 -->|tak| K5[Rekalibracja żyroskopu i czujnika]
+    S5 -->|nie| SCR{Scroll włączony<br/>i N ≥ 2?}
 
-    SCR -->|tak| SOFF[Scroll OFF]
+    SCR -->|tak| SOFF[Wyłącz scroll]
     SOFF --> S2{N = 2?}
     S2 -->|tak| PEND([Koniec])
     S2 -->|nie| S4A
 
-    SCR -->|nie| S4A{N = 4 i scroll OFF?}
-    S4A -->|tak| SON[Scroll ON]
+    SCR -->|nie| S4A{N = 4<br/>i scroll wyłączony?}
+    S4A -->|tak| SON[Włącz scroll]
     S4A -->|nie| SCRC{Scroll aktywny?}
 
     SON --> PEND
     SCRC -->|tak| PEND
     SCRC -->|nie| N1{N = 1?}
-    N1 -->|tak| LPM[LPM]
+    N1 -->|tak| LPM[Pojedyncze kliknięcie LPM]
     N1 -->|nie| N2{N = 2?}
-    N2 -->|tak| DBL[Double LPM]
+    N2 -->|tak| DBL[Podwójne kliknięcie LPM]
     N2 -->|nie| N3{N = 3?}
-    N3 -->|tak| PPM[PPM]
+    N3 -->|tak| PPM[Kliknięcie PPM]
     N3 -->|nie| PEND
 
-    LPM --> Q[odswiezHidKlikniecia]
+    LPM --> Q[Wyślij kliknięcie]
     DBL --> Q
     PPM --> Q
-    Q --> U{USB-HID?}
-    U -->|tak| USBM[usbMysz]
-    U -->|nie| BLEM[bleMysz]
+    Q --> U{Połączenie USB?}
+    U -->|tak| USBM[Mysz przez USB]
+    U -->|nie| BLEM[Mysz przez Bluetooth]
     DBG --> PEND
     K5 --> PEND
 
@@ -643,19 +643,19 @@ flowchart TD
     class USBM,BLEM io
 ```
 
-### 10. Wysyłka ruchu myszy (`wyslijRuchMyszy`)
+### 10. Wysyłanie ruchu kursora
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'background':'#ffffff','mainBkg':'#ffffff','primaryColor':'#ffffff','primaryTextColor':'#1e293b','primaryBorderColor':'#64748b','lineColor':'#475569','edgeLabelBackground':'#ffffff'},'flowchart':{'curve':'basis','nodeSpacing':40,'rankSpacing':45}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","mainBkg":"#ffffff","secondaryColor":"#ffffff","tertiaryColor":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1e293b","secondaryTextColor":"#1e293b","tertiaryTextColor":"#1e293b","primaryBorderColor":"#64748b","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff","textColor":"#1e293b"},"themeCSS":".mermaid,.mermaid svg{background-color:#ffffff!important;padding:8px}.nodeLabel,.edgeLabel,.label,.cluster-label{color:#1e293b!important}.cluster rect{fill:#f8fafc!important;stroke:#cbd5e1!important}","flowchart":{"curve":"basis","nodeSpacing":40,"rankSpacing":45}}}%%
 flowchart LR
-    R([delty X/Y]) --> SC{trybScrolla?}
-    SC -->|tak| WH["scroll = -dY / 7<br/>prog Z 3 deg/s"]
-    SC -->|nie| MV[Przesunięcie kursora dX/dY]
-    WH --> CH{USB-HID?}
+    R([Ruch głowy X/Y]) --> SC{Tryb scrolla?}
+    SC -->|tak| WH["Przewijanie: ruch w górę/dół ÷ 7<br/>próg kiwania 3°/s"]
+    SC -->|nie| MV[Przesunięcie kursora]
+    WH --> CH{Połączenie USB?}
     MV --> CH
-    CH -->|tak| UM[usbMysz.move]
-    CH -->|nie| BM{BLE połączony?}
-    BM -->|tak| BL[bleMysz.move]
+    CH -->|tak| UM[Wyślij przez USB]
+    CH -->|nie| BM{Bluetooth połączony?}
+    BM -->|tak| BL[Wyślij przez Bluetooth]
     BM -->|nie| X([Brak wysyłki])
 
     classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
@@ -673,15 +673,15 @@ flowchart LR
 | Kolor | Znaczenie |
 |-------|-----------|
 | **Fiolet** | Start / koniec (terminator) |
-| **Niebieski** | Proces — obliczenia, funkcje, stany |
+| **Niebieski** | Proces — obliczenia, stany |
 | **Żółty** | Decyzja — warunek tak/nie |
-| **Zielony** | Wejście/wyjście — USB, BLE, urządzenia |
-| **Czerwony** | Odrzucenie, błąd, halt |
+| **Zielony** | Wejście/wyjście — USB, Bluetooth, urządzenia |
+| **Czerwony** | Odrzucenie, błąd, zatrzymanie |
 | **Szary** | Notatka / wyzwalacz pomocniczy |
 
-Tło każdego schematu: **białe** (`#ffffff`). Grupy (subgraph) mają delikatne tło `#f8fafc`, żeby się nie zlewały.
+Tło każdego schematu: **białe** — wymuszone stylem CSS w Mermaid (działa też w podglądzie z ciemnym motywem). Grupy mają delikatne tło `#f8fafc`.
 
-**Podgląd:** GitHub, GitLab, VS Code — podgląd Markdown z Mermaid.
+**Podgląd:** GitHub, GitLab, VS Code / Cursor — podgląd Markdown z Mermaid. Etykiety opisują **co robi system**, nie nazwy funkcji z kodu.
 
 ---
 
