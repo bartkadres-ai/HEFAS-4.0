@@ -406,7 +406,7 @@ flowchart TD
     subgraph KONIEC["Zakończenie cyklu"]
         L1[Aktualizacja LED statusu]
         L2[Log diagnostyczny — tryb serwisowy]
-        L3[Opóźnienie cyklu]
+        L3[Opóźnienie cyklu — 10 ms<br/>100 Hz]
         L1 --> L2 --> L3
     end
 
@@ -427,7 +427,7 @@ flowchart TD
     style KONIEC fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px
 ```
 
-### 4. Przetwarzanie ruchu głowy (IMU)
+### 4. Ruch głowy (IMU) i gest przechyłu
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
@@ -503,8 +503,8 @@ flowchart TD
     K1 --> T1
 
     subgraph TICK["Faza pomiarowa ~3 s"]
-        T1[Zbieranie próbek IMU i czujnika oka]
-        T2[Stabilizacja sygnału oka]
+        T1["Zbieranie ~200 próbek<br/>IMU + TCRT — ~2 s"]
+        T2["Stabilizacja IR ~100 próbek<br/>— ~1 s"]
         T3[Zakończenie kalibracji]
         T1 --> T2 --> T3
     end
@@ -526,21 +526,22 @@ flowchart TD
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    A([START — odczyt czujnika oka]) --> ADC[Pobranie sygnału z czujnika]
-    ADC --> EMA[Filtracja sygnału — wygładzanie]
+    A([START — odczyt czujnika oka]) --> ADC[Pobranie sygnału ADC]
+    ADC --> FAST[Filtr EMA szybki — tcrtFast]
+    ADC --> SLOW[Filtr EMA wyświetlania — tcrtFiltered]
 
-    EMA --> OTW{Czy oko jest otwarte?}
+    FAST --> OTW{Czy oko otwarte?<br/>histereza na tcrtFast}
 
-    OTW -->|TAK| TRIG{Czy sygnał maleje — mrugnięcie?}
+    OTW -->|TAK| TRIG{Czy tcrtFast poniżej<br/>progu zamknięcia?}
     TRIG -->|TAK| ZAM[Zapisz stan: Oko zamknięte]
     TRIG -->|NIE| FRZ{Czy zablokowana adaptacja?}
-    FRZ -->|NIE| ADAPT[Adaptacja poziomu spoczynku]
+    FRZ -->|NIE| ADAPT[Adaptacja baseline<br/>z tcrtFast — EMA wolny]
     FRZ -->|TAK| KON
 
-    OTW -->|NIE| REL{Czy sygnał rośnie — otwarcie?}
+    OTW -->|NIE| REL{Czy tcrtFast powyżej<br/>progu otwarcia?}
     REL -->|TAK| OOTW[Zapisz stan: Oko otwarte]
-    REL -->|NIE| MECH{Czy wykryto zasłonięcie czujnika?}
-    MECH -->|TAK| MECHR[Ustaw stan: Oko otwarte]
+    REL -->|NIE| MECH{Czy tcrtFast poniżej<br/>progu zwarć mechanicznych?}
+    MECH -->|TAK| MECHR[Reset stanu — oko otwarte]
     MECH -->|NIE| KON
 
     ZAM --> KON([KONIEC])
@@ -548,14 +549,14 @@ flowchart TD
     OOTW --> KON
     MECHR --> KON
 
-    NOTE["Blokada adaptacji poziomu spoczynku:<br>- zliczanie serii mrugnięć<br>- tryb przeciągania drag<br>- długie zamknięcie oka"] -.-> FRZ
+    NOTE["Blokada adaptacji baseline:<br>- seria mrugnięć aktywna<br>- tryb drag<br>- oko zamknięte / kalibracja"] -.-> FRZ
 
     classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
     classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
     classDef note fill:#f1f5f9,stroke:#94a3b8,stroke-width:1px,color:#334155
     class A,KON startEnd
-    class ADC,EMA,ZAM,ADAPT,OOTW,MECHR process
+    class ADC,FAST,SLOW,ZAM,ADAPT,OOTW,MECHR process
     class OTW,TRIG,FRZ,REL,MECH decision
     class NOTE note
 ```
@@ -569,7 +570,7 @@ flowchart TD
     RDY -->|NIE| MX([KONIEC])
     RDY -->|TAK| CNT[Próbkowanie stanu oka — cykl]
 
-    CNT --> C1{Czy potwierdzone zamknięcie oka?}
+    CNT --> C1{Czy potwierdzone zamknięcie oka?<br/>N próbek zamknięcia}
     C1 -->|TAK| CS[Zapis czasu zamknięcia]
     C1 -->|NIE| C2{Czy wykryto otwarcie<br/>po zamknięciu?}
 
@@ -594,7 +595,7 @@ flowchart TD
     STREFA --> TM
     REGD --> TM[Sprawdzenie timeout serii]
 
-    TM --> T1{Czy oko otwarte<br/>i minął odstęp?}
+    TM --> T1{Czy seria aktywna, oko otwarte<br/>i upłynął czas ciszy serii?}
     T1 -->|NIE| MX
     T1 -->|TAK| T2{Czy czas serii<br/>w zakresie dopuszczalnym?}
     T2 -->|NIE| DROP[Odrzucenie serii]
@@ -649,7 +650,8 @@ flowchart TD
     LPM --> Q[Kolejkowanie kliknięcia HID]
     DBL --> Q
     PPM --> Q
-    Q --> U{Czy połączenie USB-HID?}
+    Q --> HIDSEQ[Sekwencja press/release<br/>kolejka HID]
+    HIDSEQ --> U{Czy połączenie USB-HID?}
     U -->|TAK| USBM[Wysłanie przez USB]
     U -->|NIE| BLEM[Wysłanie przez BLE]
     DBG --> PEND
@@ -662,7 +664,7 @@ flowchart TD
     classDef success fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#14532d
     classDef setup fill:#e0e7ff,stroke:#6366f1,stroke-width:2px,color:#3730a3
     class P,PEND startEnd
-    class SOFF,SON,Q process
+    class SOFF,SON,Q,HIDSEQ process
     class DBG,K5 setup
     class LPM,DBL,PPM success
     class S6,S5,SCR,S2,S4A,SCRC,N1,N2,N3,U decision
@@ -680,7 +682,7 @@ flowchart LR
     WH --> CH{Czy połączenie USB-HID?}
     MV --> CH
     CH -->|TAK| UM[Wysłanie ruchu — USB]
-    CH -->|NIE| BM{Czy BLE połączony?}
+    CH -->|NIE| BM{Czy BLE HID aktywny?}
     BM -->|TAK| BL[Wysłanie ruchu — BLE]
     BM -->|NIE| X([KONIEC — brak transmisji])
 
