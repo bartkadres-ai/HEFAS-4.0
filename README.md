@@ -278,31 +278,31 @@ Wpisy trafiają też do WebDebug zgodnie z maską filtrów (szczegóły mrugnię
 
 ## Architektura
 
-HEFAS **cały czas** sprawdza ruch głowy i mrugnięcia, a potem rusza kursorem lub klika — jak zwykła myszka. Poniżej schematy **krok po kroku**, prostym językiem (bez nazw z kodu).
+Poniżej **diagramy przepływu** systemu HEFAS — styl **bezosobowy i funkcjonalny** (zgodny z dobrymi praktykami dokumentacji inżynieryjskiej). Opisują zachowanie systemu i stany obiektów, bez zwrotów do użytkownika w 2. osobie.
 
-**Jak czytać schemat:** owal = start lub koniec · prostokąt = coś się dzieje · romb = pytanie tak/nie · strzałka = kolejny krok. **Kolory** — legenda na końcu sekcji.
+**Konwencja:** owal = START / KONIEC · prostokąt = proces · romb = warunek (TAK / NIE) · strzałka = kolejny krok. **Kolory** — legenda na końcu sekcji.
 
-### 1. Co składa się na urządzenie?
+### 1. Struktura systemu HEFAS
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart LR
-    subgraph WEJ["Co urządzenie „widzi”"]
-        IMU["Czujnik ruchu głowy"]
-        IR["Czujnik przy oku<br/>wykrywa mrugnięcia"]
-        WEB["Strona w telefonie<br/>WiFi HEFAS-Debug"]
-        USBIN["Kabel USB<br/>prąd i połączenie z PC"]
+    subgraph WEJ["Wejścia"]
+        IMU["Czujnik żyroskopowy<br/>ruch głowy"]
+        IR["Czujnik optyczny oka<br/>mrugnięcia"]
+        WEB["Interfejs WiFi<br/>WebDebug"]
+        USBIN["Interfejs USB-C<br/>zasilanie, HID"]
     end
 
-    subgraph MCU["Mózg urządzenia"]
-        LOOP["Non-stop analizuje<br/>co się dzieje"]
+    subgraph MCU["Sterownik centralny"]
+        LOOP["Pętla przetwarzania<br/>głównego"]
     end
 
-    subgraph WYJ["Co urządzenie robi"]
-        HID["Rusza kursorem<br/>przez kabel USB"]
-        BLE["Rusza kursorem<br/>przez Bluetooth"]
-        LED["Kolorowa dioda<br/>pokazuje stan"]
-        LOG["Zapisuje informacje<br/>dla użytkownika i serwisu"]
+    subgraph WYJ["Wyjścia"]
+        HID["HID USB — mysz"]
+        BLE["BLE — mysz"]
+        LED["Wskaźnik LED statusu"]
+        LOG["Log diagnostyczny<br/>Serial, WebDebug"]
     end
 
     IMU --> LOOP
@@ -325,20 +325,20 @@ flowchart LR
     style WYJ fill:#fff7ed,stroke:#fdba74,stroke-width:2px,color:#9a3412
 ```
 
-### 2. Co się dzieje po włączeniu?
+### 2. Sekwencja inicjalizacji (START)
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    S([Włączasz urządzenie]) --> SER[Przygotowanie wewnętrzne]
-    SER --> I2C[Sprawdza czujnik głowy]
-    I2C -->|nie działa| BLINK[Dioda miga — czekaj<br/>na serwis]
-    I2C -->|działa| KAL0["Dopasowuje się do Ciebie<br/>siedź spokojnie ~3 s"]
-    KAL0 --> USB["Udaje myszkę komputera<br/>przez kabel USB"]
-    USB --> ZAS0[Sprawdza skąd bierze prąd]
-    ZAS0 --> WD["Włącza WiFi do podglądu<br/>sieć HEFAS-Debug"]
-    WD --> BLE0["Szuka komputera/telefonu<br/>przez Bluetooth"]
-    BLE0 --> E([Zaczyna normalną pracę])
+    S([START — inicjalizacja]) --> SER[Inicjalizacja komunikacji wewnętrznej]
+    SER --> I2C[Test połączenia czujnika żyroskopowego]
+    I2C -->|NIE| BLINK[Sygnalizacja błędu — zatrzymanie]
+    I2C -->|TAK| KAL0["Uruchomienie kalibracji<br/>~3 s"]
+    KAL0 --> USB[Inicjalizacja HID USB — mysz]
+    USB --> ZAS0[Odczyt stanu zasilania]
+    ZAS0 --> WD["Uruchomienie AP WiFi<br/>HEFAS-Debug"]
+    WD --> BLE0["Reklama BLE<br/>gdy brak USB-HID"]
+    BLE0 --> E([Wejście do pętli głównej])
 
     classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
@@ -350,63 +350,63 @@ flowchart TD
     class BLINK bad
 ```
 
-### 3. Ciągła praca — powtarza się w kółko
+### 3. Pętla główna — jeden cykl
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    START([Od początku]) --> W1
+    START([START cyklu]) --> W1
 
-    subgraph WEBDBG["Strona w telefonie / komputerze"]
-        W1[Obsługuje panel w przeglądarce]
-        W2{Nacisnięto Kalibruj?}
-        W3[Ponowne dopasowanie do głowy]
+    subgraph WEBDBG["Moduł WebDebug"]
+        W1[Obsługa panelu HTTP]
+        W2{Czy żądanie rekalibracji?}
+        W3[Uruchomienie kalibracji]
         W1 --> W2
-        W2 -->|tak| W3
+        W2 -->|TAK| W3
     end
 
-    W2 -->|nie| S1
+    W2 -->|NIE| S1
     W3 --> S1
 
-    subgraph SENS["Głowa i oko"]
-        S1[Gdzie jest głowa?]
-        S2[Czy to gest — szybki przechył?]
-        S3[Puść wcześniejsze klawisze]
-        S4[Czy oko otwarte czy zamknięte?]
+    subgraph SENS["Moduł sensory i gest"]
+        S1[Odczyt żyroskopu]
+        S2[Detekcja gestu przechyłu]
+        S3[Zwolnienie klawiszy gestu]
+        S4[Odczyt czujnika oka]
         S1 --> S2 --> S3 --> S4
     end
 
     S4 --> Y1
 
-    subgraph SYS["Sprzęt i połączenie"]
-        Y1[Kabel USB czy Bluetooth?]
-        Y2[Trwa dopasowanie do głowy?]
-        Y3[Wykonaj zaplanowane kliknięcia]
+    subgraph SYS["Moduł systemowy"]
+        Y1[Obsługa USB i Bluetooth]
+        Y2[Aktualizacja kalibracji]
+        Y3[Wykonanie kolejki kliknięć HID]
         Y1 --> Y2 --> Y3
     end
 
-    Y3 --> PAUZA{Myszka wstrzymana<br/>z panelu?}
+    Y3 --> PAUZA{Czy sterowanie myszą<br/>wstrzymane?}
 
-    PAUZA -->|nie| A1
-    PAUZA -->|tak| L1
+    PAUZA -->|NIE| A1
+    PAUZA -->|TAK| L1
 
     subgraph ACT["Sterowanie kursorem"]
-        A1[Liczy mrugnięcia]
-        A2{Głowa się ruszyła<br/>i nie trwa kliknięcie?}
-        A3[Rusz kursor na ekranie]
-        A4[Bez ruchu kursora]
+        A1[Obliczenia serii mrugnięć]
+        A2{Czy wykryto ruch głowy<br/>i brak aktywnego kliknięcia?}
+        A3[Wysłanie ruchu kursora]
+        A4[Brak ruchu kursora]
         A1 --> A2
-        A2 -->|tak| A3
-        A2 -->|nie| A4
+        A2 -->|TAK| A3
+        A2 -->|NIE| A4
     end
 
     A3 --> L1
     A4 --> L1
 
-    subgraph KONIEC["Koniec jednego obrotu"]
-        L1[Zmień kolor diody statusu]
-        L2[Szczegółowy log — tylko tryb serwisowy]
-        L3[Krótka pauza]
+    subgraph KONIEC["Zakończenie cyklu"]
+        L1[Aktualizacja LED statusu]
+        L2[Log diagnostyczny — tryb serwisowy]
+        L3[Opóźnienie cyklu]
         L1 --> L2 --> L3
     end
 
@@ -427,32 +427,32 @@ flowchart TD
     style KONIEC fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px
 ```
 
-### 4. Jak ruch głowy rusza kursorem?
+### 4. Przetwarzanie ruchu głowy (IMU)
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    R([Gdzie jest głowa?]) --> OFF[Odejmij pozycję spoczynkową]
-    OFF --> BLEW[Obudź Bluetooth jeśli śpi]
-    BLEW --> PROGX{Wyraźny ruch w bok?}
-    PROGX -->|nie| GX0[Zignoruj]
-    PROGX -->|tak| GX1[Uwzględnij]
+    R([START — odczyt żyroskopu]) --> OFF[Korekcja offsetu kalibracji]
+    OFF --> BLEW[Aktywacja BLE ruchem]
+    BLEW --> PROGX{Czy |Gx| > próg?}
+    PROGX -->|NIE| GX0[Gx := 0]
+    PROGX -->|TAK| GX1[Zachowanie Gx]
     GX0 --> PROGZ
-    GX1 --> PROGZ{Wyraźne kiwanie głową?<br/>przy przewijaniu — mocniejszy ruch}
-    PROGZ -->|nie| GZ0[Zignoruj]
-    PROGZ -->|tak| GZ1[Uwzględnij]
+    GX1 --> PROGZ{Czy |Gz| > próg?<br/>tryb scroll: próg podwyższony}
+    PROGZ -->|NIE| GZ0[Gz := 0]
+    PROGZ -->|TAK| GZ1[Zachowanie Gz]
     GZ0 --> MARTWA
-    GZ1 --> MARTWA[Odfiltruj drobne drgania]
-    MARTWA --> DELTA[Przelicz na ruch kursora]
-    DELTA --> G([Gest — szybki przechył w prawo])
+    GZ1 --> MARTWA[Filtr strefy martwej]
+    MARTWA --> DELTA[Obliczenie delty kursora]
+    DELTA --> G([Detekcja gestu przechyłu])
 
-    G --> GOK{Urządzenie gotowe<br/>oko otwarte<br/>myszka aktywna?}
-    GOK -->|nie| GKON([Koniec gestu])
-    GOK -->|tak| GY{Szybko pochyl głowę<br/>w prawo i przytrzymaj<br/>chwilę?}
-    GY -->|tak| OSK{Podłączony kabel USB?}
-    OSK -->|tak| KBD[Otwórz klawiaturę ekranową<br/>Windows: Ctrl+Win+O]
-    OSK -->|nie| BLEONLY[Tylko zapis w logu<br/>Bluetooth bez klawiatury]
-    GY -->|nie| GKON
+    G --> GOK{Czy system gotowy<br/>i oko otwarte<br/>i sterowanie aktywne?}
+    GOK -->|NIE| GKON([KONIEC gestu])
+    GOK -->|TAK| GY{Czy przechył Gy w prawo<br/>powyżej progu i czasu?}
+    GY -->|TAK| OSK{Czy połączenie USB-HID?}
+    OSK -->|TAK| KBD[Wysłanie skrótu Ctrl+Win+O]
+    OSK -->|NIE| BLEONLY[Zapis do logu — BLE bez klawiatury]
+    GY -->|NIE| GKON
     KBD --> GKON
     BLEONLY --> GKON
 
@@ -468,22 +468,22 @@ flowchart TD
     class BLEONLY connect
 ```
 
-### 5. Prąd, kabel USB i Bluetooth
+### 5. Zasilanie i łączność USB/BLE
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    Z([Sprawdź połączenie i prąd]) --> ST[Skąd jest zasilanie?]
-    ST --> FL["Kabel USB, bateria,<br/>ładowanie — bez % baterii"]
-    FL --> CHG{Cokolwiek się zmieniło?}
-    CHG -->|tak| LOGZ[Pokaż na panelu w przeglądarce]
-    CHG -->|nie| USBCHK
-    LOGZ --> USBCHK{Komputer widzi myszkę<br/>przez kabel?}
+    Z([START — zasilanie i BLE]) --> ST[Odczyt stanu zasilania]
+    ST --> FL[Aktualizacja flag zasilania]
+    FL --> CHG{Czy stan się zmienił?}
+    CHG -->|TAK| LOGZ[Zapis zdarzenia ZAS — WebDebug]
+    CHG -->|NIE| USBCHK
+    LOGZ --> USBCHK{Czy host widzi USB-HID?}
 
-    USBCHK -->|tak| OFF[Ukryj Bluetooth<br/>kabel wystarczy]
-    USBCHK -->|nie| CON{Bluetooth w użyciu<br/>lub niedawno używany?}
-    CON -->|tak| ON[Szukaj urządzenia<br/>przez Bluetooth]
-    CON -->|nie| SLEEP[Wyłącz Bluetooth<br/>żeby oszczędzać prąd]
+    USBCHK -->|TAK| OFF[Wyłączenie reklamy BLE]
+    USBCHK -->|NIE| CON{Czy BLE aktywny<br/>lub aktywność &lt; 5 min?}
+    CON -->|TAK| ON[Włączenie reklamy BLE]
+    CON -->|NIE| SLEEP[Tryb uśpienia BLE]
 
     classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
@@ -493,24 +493,24 @@ flowchart TD
     class CHG,USBCHK,CON decision
 ```
 
-### 6. Dopasowanie do użytkownika (kalibracja)
+### 6. Procedura kalibracji
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    KTRIG["Start: włączenie · 5 mrugnięć · przycisk Kalibruj"] -.-> K0
-    K0([Zacznij dopasowanie]) --> K1["Trwa uczenie — siedź spokojnie"]
+    KTRIG["Wyzwalacze: START, 5× mrugnięcie, WebDebug"] -.-> K0
+    K0([START kalibracji]) --> K1[Ustawienie flagi: kalibracja trwa]
     K1 --> T1
 
-    subgraph TICK["Trwa ok. 3 sekundy"]
-        T1["Zbiera pomiary głowy i oka"]
-        T2["Czeka aż sygnał z oka się uspokoi"]
-        T3[Kończy uczenie]
+    subgraph TICK["Faza pomiarowa ~3 s"]
+        T1[Zbieranie próbek IMU i czujnika oka]
+        T2[Stabilizacja sygnału oka]
+        T3[Zakończenie kalibracji]
         T1 --> T2 --> T3
     end
 
-    T3 --> K4["Zapamiętuje Twoją pozycję<br/>dioda mruga 3× — gotowe"]
-    K4 --> KON([Można normalnie korzystać])
+    T3 --> K4["Zapis poziomów · system gotowy<br/>sygnalizacja LED 3×"]
+    K4 --> KON([KONIEC kalibracji])
 
     classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
@@ -521,34 +521,34 @@ flowchart TD
     style TICK fill:#eff6ff,stroke:#93c5fd,stroke-width:2px
 ```
 
-### 7. Jak urządzenie wie, że mrugnąłeś?
+### 7. Detekcja mrugnięć — czujnik oka
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    A([Sprawdź czujnik przy oku]) --> ADC[Odczytaj sygnał]
-    ADC --> EMA[Wygładź — mniej fałszywych alarmów]
+    A([START — odczyt czujnika oka]) --> ADC[Pobranie sygnału z czujnika]
+    ADC --> EMA[Filtracja sygnału — wygładzanie]
 
-    EMA --> OTW{Oko otwarte?}
+    EMA --> OTW{Czy oko jest otwarte?}
 
-    OTW -->|tak| TRIG{Sygnał słabnie — mrugnąłeś?}
-    TRIG -->|tak| ZAM[Zapisz: oko zamknięte]
-    TRIG -->|nie| FRZ{Czekamy na serię mrugnięć?}
-    FRZ -->|nie| ADAPT[Powoli dopasuj poziom spoczynku]
-    FRZ -->|tak| KON
+    OTW -->|TAK| TRIG{Czy sygnał maleje — mrugnięcie?}
+    TRIG -->|TAK| ZAM[Zapisz stan: Oko zamknięte]
+    TRIG -->|NIE| FRZ{Czy zablokowana adaptacja?}
+    FRZ -->|NIE| ADAPT[Adaptacja poziomu spoczynku]
+    FRZ -->|TAK| KON
 
-    OTW -->|nie| REL{Sygnał rośnie — otworzyłeś oko?}
-    REL -->|tak| OOTW[Zapisz: oko otwarte]
-    REL -->|nie| MECH{Coś zasłoniło czujnik?}
-    MECH -->|tak| MECHR[Traktuj jak otwarte oko]
-    MECH -->|nie| KON
+    OTW -->|NIE| REL{Czy sygnał rośnie — otwarcie?}
+    REL -->|TAK| OOTW[Zapisz stan: Oko otwarte]
+    REL -->|NIE| MECH{Czy wykryto zasłonięcie czujnika?}
+    MECH -->|TAK| MECHR[Ustaw stan: Oko otwarte]
+    MECH -->|NIE| KON
 
-    ZAM --> KON([Koniec])
+    ZAM --> KON([KONIEC])
     ADAPT --> KON
     OOTW --> KON
     MECHR --> KON
 
-    NOTE["Nie zmienia poziomu gdy:<br/>liczy serię mrugnięć, przeciągasz, oko długo zamknięte"] -.-> FRZ
+    NOTE["Blokada adaptacji poziomu spoczynku:<br>- zliczanie serii mrugnięć<br>- tryb przeciągania drag<br>- długie zamknięcie oka"] -.-> FRZ
 
     classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
@@ -560,45 +560,45 @@ flowchart TD
     class NOTE note
 ```
 
-### 8. Od mrugnięcia do kliknięcia
+### 8. Logika mrugnięć — od detekcji do akcji
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    M0([Liczy mrugnięcia]) --> RDY{Urządzenie już<br/>się dopasowało?}
-    RDY -->|nie| MX([Koniec — czekaj])
-    RDY -->|tak| CNT[Non-stop sprawdza oko]
+    M0([START — obliczenia mrugnięć]) --> RDY{Czy system skalibrowany?}
+    RDY -->|NIE| MX([KONIEC])
+    RDY -->|TAK| CNT[Próbkowanie stanu oka — cykl]
 
-    CNT --> C1{Zamknąłeś oko?}
-    C1 -->|tak| CS[Zapamiętaj moment zamknięcia]
-    C1 -->|nie| C2{Otworzyłeś oko<br/>po zamknięciu?}
+    CNT --> C1{Czy potwierdzone zamknięcie oka?}
+    C1 -->|TAK| CS[Zapis czasu zamknięcia]
+    C1 -->|NIE| C2{Czy wykryto otwarcie<br/>po zamknięciu?}
 
-    C2 -->|tak| EDGE[To było mrugnięcie — policz je]
-    C2 -->|nie| C3{Oko długo zamknięte<br/>ponad ¾ sekundy?}
-    C3 -->|tak| DRG[Trzymasz przycisk — przeciąganie]
-    C3 -->|nie| TM
+    C2 -->|TAK| EDGE[Obsługa zbocza otwarcia]
+    C2 -->|NIE| C3{Czy oko zamknięte &gt; 850 ms?}
+    C3 -->|TAK| DRG[Aktywacja trybu drag — LPM]
+    C3 -->|NIE| TM
 
-    EDGE --> E1{Właśnie przeciągałeś?}
-    E1 -->|tak| DRGOFF[Puść przycisk myszy]
-    E1 -->|nie| E2{Jak długo było zamknięte?}
-    E2 -->|bardzo krótko| ART[To szum — ignoruj]
-    E2 -->|krótko — normalne mrugnięcie| REG[Dodaj do serii]
-    E2 -->|średnio lub długo| STREFA[Bez kliknięcia]
+    EDGE --> E1{Czy tryb drag aktywny?}
+    E1 -->|TAK| DRGOFF[Dezaktywacja drag]
+    E1 -->|NIE| E2{Klasyfikacja czasu zamknięcia}
+    E2 -->|&lt; 42 ms| ART[Odrzucenie impulsu — szum]
+    E2 -->|42–280 ms| REG[Rejestracja mrugnięcia w serii]
+    E2 -->|&gt; 280 ms| STREFA[Strefa bez akcji kliknięcia]
 
-    REG --> REGD["Czeka chwilę po serii<br/>zanim zrobi akcję"]
+    REG --> REGD[Ocena czasu serii mrugnięć]
 
     CS --> TM
     DRG --> TM
     DRGOFF --> TM
     ART --> TM
     STREFA --> TM
-    REGD --> TM[Czy seria się skończyła?]
+    REGD --> TM[Sprawdzenie timeout serii]
 
-    TM --> T1{Oko otwarte<br/>i minął odstęp?}
-    T1 -->|nie| MX
-    T1 -->|tak| T2{Czy mrugnięcia<br/>były w sensownym tempie?}
-    T2 -->|nie| DROP[Anuluj — za szybko lub za wolno]
-    T2 -->|tak| ACT[Wykonaj akcję — klik, scroll itd.]
+    TM --> T1{Czy oko otwarte<br/>i minął odstęp?}
+    T1 -->|NIE| MX
+    T1 -->|TAK| T2{Czy czas serii<br/>w zakresie dopuszczalnym?}
+    T2 -->|NIE| DROP[Odrzucenie serii]
+    T2 -->|TAK| ACT[Wykonanie akcji przypisanej do serii]
     DROP --> MX
     ACT --> MX
 
@@ -616,42 +616,42 @@ flowchart TD
     class DROP bad
 ```
 
-### 9. Co robią mrugnięcia? — ściągawka
+### 9. Mapowanie liczby mrugnięć na akcje
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    P([Ile razy mrugnąłeś?]) --> S6{6 razy?}
-    S6 -->|tak| DBG[Włącz/wyłącz tryb serwisowy]
-    S6 -->|nie| S5{5 razy?}
-    S5 -->|tak| K5[Ponowne dopasowanie do głowy]
-    S5 -->|nie| SCR{Przewijanie włączone<br/>i 2+ mrugnięcia?}
+    P([START — licznik mrugnięć N]) --> S6{Czy N = 6?}
+    S6 -->|TAK| DBG[Przełączenie trybu serwisowego]
+    S6 -->|NIE| S5{Czy N = 5?}
+    S5 -->|TAK| K5[Uruchomienie rekalibracji]
+    S5 -->|NIE| SCR{Czy scroll aktywny<br/>i N ≥ 2?}
 
-    SCR -->|tak| SOFF[Wyłącz przewijanie głową]
-    SOFF --> S2{2 mrugnięcia?}
-    S2 -->|tak| PEND([Koniec])
-    S2 -->|nie| S4A
+    SCR -->|TAK| SOFF[Wyłączenie trybu scroll]
+    SOFF --> S2{Czy N = 2?}
+    S2 -->|TAK| PEND([KONIEC])
+    S2 -->|NIE| S4A
 
-    SCR -->|nie| S4A{4 mrugnięcia<br/>a przewijanie wyłączone?}
-    S4A -->|tak| SON[Włącz przewijanie głową]
-    S4A -->|nie| SCRC{Przewijanie aktywne?}
+    SCR -->|NIE| S4A{Czy N = 4<br/>i scroll wyłączony?}
+    S4A -->|TAK| SON[Włączenie trybu scroll]
+    S4A -->|NIE| SCRC{Czy scroll aktywny?}
 
     SON --> PEND
-    SCRC -->|tak| PEND
-    SCRC -->|nie| N1{1 mrugnięcie?}
-    N1 -->|tak| LPM[Zwykłe kliknięcie lewym]
-    N1 -->|nie| N2{2 mrugnięcia?}
-    N2 -->|tak| DBL[Podwójne kliknięcie lewym]
-    N2 -->|nie| N3{3 mrugnięcia?}
-    N3 -->|tak| PPM[Kliknięcie prawym]
-    N3 -->|nie| PEND
+    SCRC -->|TAK| PEND
+    SCRC -->|NIE| N1{Czy N = 1?}
+    N1 -->|TAK| LPM[Kliknięcie LPM]
+    N1 -->|NIE| N2{Czy N = 2?}
+    N2 -->|TAK| DBL[Podwójne kliknięcie LPM]
+    N2 -->|NIE| N3{Czy N = 3?}
+    N3 -->|TAK| PPM[Kliknięcie PPM]
+    N3 -->|NIE| PEND
 
-    LPM --> Q[Wyślij do komputera]
+    LPM --> Q[Kolejkowanie kliknięcia HID]
     DBL --> Q
     PPM --> Q
-    Q --> U{Podłączony kabel USB?}
-    U -->|tak| USBM[Przez kabel]
-    U -->|nie| BLEM[Przez Bluetooth]
+    Q --> U{Czy połączenie USB-HID?}
+    U -->|TAK| USBM[Wysłanie przez USB]
+    U -->|NIE| BLEM[Wysłanie przez BLE]
     DBG --> PEND
     K5 --> PEND
 
@@ -669,20 +669,20 @@ flowchart TD
     class USBM,BLEM connect
 ```
 
-### 10. Jak głowa rusza kursorem na ekranie?
+### 10. Wysyłka ruchu kursora
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart LR
-    R([Poruszasz głową]) --> SC{Tryb przewijania<br/>strony włączony?}
-    SC -->|tak| WH[Kiwanie głową = scroll w górę/dół]
-    SC -->|nie| MV[Ruch głowy = ruch kursora]
-    WH --> CH{Kabel USB?}
+    R([START — delta ruchu]) --> SC{Czy tryb scroll aktywny?}
+    SC -->|TAK| WH[Obliczenie scroll — oś Z]
+    SC -->|NIE| MV[Obliczenie przesunięcia kursora]
+    WH --> CH{Czy połączenie USB-HID?}
     MV --> CH
-    CH -->|tak| UM[Wyślij przez kabel]
-    CH -->|nie| BM{Bluetooth połączony?}
-    BM -->|tak| BL[Wyślij bezprzewodowo]
-    BM -->|nie| X([Nic nie wysyła — brak połączenia])
+    CH -->|TAK| UM[Wysłanie ruchu — USB]
+    CH -->|NIE| BM{Czy BLE połączony?}
+    BM -->|TAK| BL[Wysłanie ruchu — BLE]
+    BM -->|NIE| X([KONIEC — brak transmisji])
 
     classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
@@ -696,24 +696,24 @@ flowchart LR
 
 ### Legenda kolorów
 
-| Kolor | Co oznacza |
-|-------|------------|
-| **Fiolet** | Start albo koniec |
-| **Niebieski** | Krok — coś się dzieje |
-| **Bursztyn / żółty** | Pytanie — tak czy nie? |
-| **Zielony jasny** | Wejście — czujniki, sygnały do urządzenia |
-| **Pomarańczowy** | Wyjście — kursor, dioda, logi |
-| **Indygo** | „Mózg” — główne przetwarzanie |
+| Kolor | Znaczenie (typ bloku) |
+|-------|------------------------|
+| **Fiolet** | START / KONIEC |
+| **Niebieski** | Proces — operacja systemu |
+| **Bursztyn** | Warunek — odpowiedź TAK / NIE |
+| **Zielony jasny** | Wejście — czujniki, interfejsy |
+| **Pomarańczowy** | Wyjście — HID, LED, log |
+| **Indygo** | Przetwarzanie centralne |
 | **Indygo jasny** | Kalibracja, tryb serwisowy |
-| **Miętowy** | Wysyłka do komputera (USB / Bluetooth) |
-| **Zielony mocny** | Udana akcja — klik, ruch kursora |
+| **Miętowy** | Transmisja USB / BLE |
+| **Zielony** | Akcja wykonana pomyślnie |
 | **Czerwony** | Błąd lub odrzucenie |
-| **Pomarańczowy jasny** | Ostrzeżenie — ignoruj, bez kliku |
-| **Szary** | Wskazówka lub wyzwalacz |
+| **Pomarańczowy jasny** | Ostrzeżenie — brak akcji |
+| **Szary** | Notatka, wyzwalacz |
 
-Tło schematów: **białe** (czytelne też w ciemnym motywie GitHuba).
+Tło schematów: **białe** (`darkMode: false` w dyrektywie `init`).
 
-**Podgląd:** GitHub, GitLab, VS Code / Cursor. Szczegóły techniczne (czasy w ms, progi) są w sekcjach wyżej w README — tu chodzi o **zrozumienie idei**, nie parametrów.
+**Podgląd:** GitHub, GitLab, VS Code / Cursor. Parametry liczbowe (ms, progi) — w sekcjach technicznych powyżej.
 
 ---
 
