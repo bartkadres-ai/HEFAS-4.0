@@ -280,12 +280,12 @@ Wpisy trafiają też do WebDebug zgodnie z maską filtrów (szczegóły mrugnię
 
 HEFAS **cały czas** sprawdza ruch głowy i mrugnięcia, a potem rusza kursorem lub klika — jak zwykła myszka. Poniżej schematy **krok po kroku**, prostym językiem (bez nazw z kodu).
 
-**Jak czytać schemat:** owal = start lub koniec · prostokąt = coś się dzieje · romb = pytanie tak/nie · strzałka = kolejny krok.
+**Jak czytać schemat:** owal = start lub koniec · prostokąt = coś się dzieje · romb = pytanie tak/nie · strzałka = kolejny krok. **Kolory** — legenda na końcu sekcji.
 
 ### 1. Co składa się na urządzenie?
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart LR
     subgraph WEJ["Co urządzenie „widzi”"]
         IMU["Czujnik ruchu głowy"]
@@ -314,16 +314,21 @@ flowchart LR
     LOOP --> LED
     LOOP --> LOG
 
-    classDef io fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
-    classDef core fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    class IMU,IR,WEB,USBIN,HID,BLE,LED,LOG io
+    classDef input fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
+    classDef core fill:#e0e7ff,stroke:#4f46e5,stroke-width:2.5px,color:#312e81
+    classDef output fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#9a3412
+    class IMU,IR,WEB,USBIN input
     class LOOP core
+    class HID,BLE,LED,LOG output
+    style WEJ fill:#ecfdf5,stroke:#6ee7b7,stroke-width:2px,color:#065f46
+    style MCU fill:#eef2ff,stroke:#a5b4fc,stroke-width:2px,color:#312e81
+    style WYJ fill:#fff7ed,stroke:#fdba74,stroke-width:2px,color:#9a3412
 ```
 
 ### 2. Co się dzieje po włączeniu?
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
     S([Włączasz urządzenie]) --> SER[Przygotowanie wewnętrzne]
     SER --> I2C[Sprawdza czujnik głowy]
@@ -335,18 +340,20 @@ flowchart TD
     WD --> BLE0["Szuka komputera/telefonu<br/>przez Bluetooth"]
     BLE0 --> E([Zaczyna normalną pracę])
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef bad fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef bad fill:#fecaca,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
+    classDef setup fill:#e0e7ff,stroke:#6366f1,stroke-width:2px,color:#3730a3
     class S,E startEnd
-    class SER,I2C,KAL0,USB,ZAS0,WD,BLE0 process
+    class SER,I2C,USB,ZAS0,WD,BLE0 process
+    class KAL0 setup
     class BLINK bad
 ```
 
 ### 3. Ciągła praca — powtarza się w kółko
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
     START([Od początku]) --> W1
 
@@ -405,18 +412,25 @@ flowchart TD
 
     L3 --> START
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef decision fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#854d0e
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
+    classDef success fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#14532d
     class START startEnd
-    class W1,W3,S1,S2,S3,S4,Y1,Y2,Y3,A1,A3,A4,L1,L2,L3 process
+    class W1,W3,S1,S2,S3,S4,Y1,Y2,Y3,A1,A4,L1,L2,L3 process
     class W2,PAUZA,A2 decision
+    class A3 success
+    style WEBDBG fill:#faf5ff,stroke:#c4b5fd,stroke-width:2px
+    style SENS fill:#ecfdf5,stroke:#6ee7b7,stroke-width:2px
+    style SYS fill:#fff7ed,stroke:#fdba74,stroke-width:2px
+    style ACT fill:#eff6ff,stroke:#93c5fd,stroke-width:2px
+    style KONIEC fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px
 ```
 
 ### 4. Jak ruch głowy rusza kursorem?
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
     R([Gdzie jest głowa?]) --> OFF[Odejmij pozycję spoczynkową]
     OFF --> BLEW[Obudź Bluetooth jeśli śpi]
@@ -442,20 +456,22 @@ flowchart TD
     KBD --> GKON
     BLEONLY --> GKON
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef decision fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#854d0e
-    classDef io fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
+    classDef connect fill:#ccfbf1,stroke:#0d9488,stroke-width:2px,color:#115e59
+    classDef success fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#14532d
     class R,G,GKON startEnd
-    class OFF,BLEW,GX0,GX1,GZ0,GZ1,MARTWA,DELTA,KBD process
+    class OFF,BLEW,GX0,GX1,GZ0,GZ1,MARTWA,DELTA process
     class PROGX,PROGZ,GOK,GY,OSK decision
-    class BLEONLY io
+    class KBD success
+    class BLEONLY connect
 ```
 
 ### 5. Prąd, kabel USB i Bluetooth
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
     Z([Sprawdź połączenie i prąd]) --> ST[Skąd jest zasilanie?]
     ST --> FL["Kabel USB, bateria,<br/>ładowanie — bez % baterii"]
@@ -469,9 +485,9 @@ flowchart TD
     CON -->|tak| ON[Szukaj urządzenia<br/>przez Bluetooth]
     CON -->|nie| SLEEP[Wyłącz Bluetooth<br/>żeby oszczędzać prąd]
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef decision fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#854d0e
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
     class Z startEnd
     class ST,FL,LOGZ,OFF,ON,SLEEP process
     class CHG,USBCHK,CON decision
@@ -480,7 +496,7 @@ flowchart TD
 ### 6. Dopasowanie do użytkownika (kalibracja)
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
     KTRIG["Start: włączenie · 5 mrugnięć · przycisk Kalibruj"] -.-> K0
     K0([Zacznij dopasowanie]) --> K1["Trwa uczenie — siedź spokojnie"]
@@ -496,18 +512,19 @@ flowchart TD
     T3 --> K4["Zapamiętuje Twoją pozycję<br/>dioda mruga 3× — gotowe"]
     K4 --> KON([Można normalnie korzystać])
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef trigger fill:#f1f5f9,stroke:#64748b,stroke-width:1px,color:#475569
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef trigger fill:#f8fafc,stroke:#64748b,stroke-width:1px,color:#475569
     class K0,KON startEnd
     class K1,T1,T2,T3,K4 process
     class KTRIG trigger
+    style TICK fill:#eff6ff,stroke:#93c5fd,stroke-width:2px
 ```
 
 ### 7. Jak urządzenie wie, że mrugnąłeś?
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
     A([Sprawdź czujnik przy oku]) --> ADC[Odczytaj sygnał]
     ADC --> EMA[Wygładź — mniej fałszywych alarmów]
@@ -533,157 +550,170 @@ flowchart TD
 
     NOTE["Nie zmienia poziomu gdy:<br/>liczy serię mrugnięć, przeciągasz, oko długo zamknięte"] -.-> FRZ
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef decision fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#854d0e
-    classDef note fill:#f1f5f9,stroke:#64748b,stroke-width:1px,color:#475569
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
+    classDef note fill:#f1f5f9,stroke:#94a3b8,stroke-width:1px,color:#334155
     class A,KON startEnd
     class ADC,EMA,ZAM,ADAPT,OOTW,MECHR process
     class OTW,TRIG,FRZ,REL,MECH decision
     class NOTE note
 ```
 
-### 8. Mrugnięcia — od sygnału do kliknięcia
+### 8. Od mrugnięcia do kliknięcia
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    M0([Obsługa mrugnięć]) --> RDY{System skalibrowany?}
-    RDY -->|nie| MX([Koniec])
-    RDY -->|tak| CNT["Co 10 ms: licz próbki<br/>otwarte / zamknięte"]
+    M0([Liczy mrugnięcia]) --> RDY{Urządzenie już<br/>się dopasowało?}
+    RDY -->|nie| MX([Koniec — czekaj])
+    RDY -->|tak| CNT[Non-stop sprawdza oko]
 
-    CNT --> C1{Zamknięcie oka<br/>potwierdzone?}
-    C1 -->|tak| CS[Zapisz czas zamknięcia]
-    C1 -->|nie| C2{Otwarcie po zamknięciu?}
+    CNT --> C1{Zamknąłeś oko?}
+    C1 -->|tak| CS[Zapamiętaj moment zamknięcia]
+    C1 -->|nie| C2{Otworzyłeś oko<br/>po zamknięciu?}
 
-    C2 -->|tak| EDGE[Obsłuż otwarcie oka]
-    C2 -->|nie| C3{Oko zamknięte<br/>ponad 850 ms?}
-    C3 -->|tak| DRG[Przeciąganie — wciśnij LPM]
+    C2 -->|tak| EDGE[To było mrugnięcie — policz je]
+    C2 -->|nie| C3{Oko długo zamknięte<br/>ponad ¾ sekundy?}
+    C3 -->|tak| DRG[Trzymasz przycisk — przeciąganie]
     C3 -->|nie| TM
 
-    EDGE --> E1{Było przeciąganie?}
-    E1 -->|tak| DRGOFF[Puść przycisk]
-    E1 -->|nie| E2{Czas zamknięcia}
-    E2 -->|mniej niż 42 ms| ART[Odrzuć szum]
-    E2 -->|42 do 280 ms| REG[Dodaj mrugnięcie do serii]
-    E2 -->|280 do 850 ms| STREFA[Strefa bez kliku]
-    E2 -->|więcej niż 850 ms| STREFA
+    EDGE --> E1{Właśnie przeciągałeś?}
+    E1 -->|tak| DRGOFF[Puść przycisk myszy]
+    E1 -->|nie| E2{Jak długo było zamknięte?}
+    E2 -->|bardzo krótko| ART[To szum — ignoruj]
+    E2 -->|krótko — normalne mrugnięcie| REG[Dodaj do serii]
+    E2 -->|średnio lub długo| STREFA[Bez kliknięcia]
 
-    REG --> REGD["Okno 600 ms między otwarciami<br/>cisza po N: 350…1000 ms"]
+    REG --> REGD["Czeka chwilę po serii<br/>zanim zrobi akcję"]
 
     CS --> TM
     DRG --> TM
     DRGOFF --> TM
     ART --> TM
     STREFA --> TM
-    REGD --> TM[Sprawdź pauzę w serii]
+    REGD --> TM[Czy seria się skończyła?]
 
-    TM --> T1{Oko otwarte<br/>i minęła cisza?}
+    TM --> T1{Oko otwarte<br/>i minął odstęp?}
     T1 -->|nie| MX
-    T1 -->|tak| T2{Czas serii poprawny?<br/>3×: 120–1300 ms}
-    T2 -->|nie| DROP[Odrzuć serię]
-    T2 -->|tak| ACT[Wykonaj akcję mrugnięcia]
+    T1 -->|tak| T2{Czy mrugnięcia<br/>były w sensownym tempie?}
+    T2 -->|nie| DROP[Anuluj — za szybko lub za wolno]
+    T2 -->|tak| ACT[Wykonaj akcję — klik, scroll itd.]
     DROP --> MX
     ACT --> MX
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef decision fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#854d0e
-    classDef warn fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
+    classDef warn fill:#fed7aa,stroke:#c2410c,stroke-width:2px,color:#7c2d12
+    classDef bad fill:#fecaca,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
+    classDef success fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#14532d
     class M0,MX startEnd
-    class CNT,CS,EDGE,DRG,DRGOFF,REG,REGD,TM,ACT process
+    class CNT,CS,EDGE,DRG,DRGOFF,REG,REGD,TM process
     class RDY,C1,C2,C3,E1,E2,T1,T2 decision
-    class ART,STREFA,DROP warn
+    class ACT success
+    class ART,STREFA warn
+    class DROP bad
 ```
 
-### 9. Akcje po serii mrugnięć
+### 9. Co robią mrugnięcia? — ściągawka
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    P([Liczba mrugnięć N]) --> S6{N = 6?}
-    S6 -->|tak| DBG[Przełącz tryb Debug]
-    S6 -->|nie| S5{N = 5?}
-    S5 -->|tak| K5[Rekalibracja żyroskopu i czujnika]
-    S5 -->|nie| SCR{Scroll włączony<br/>i N ≥ 2?}
+    P([Ile razy mrugnąłeś?]) --> S6{6 razy?}
+    S6 -->|tak| DBG[Włącz/wyłącz tryb serwisowy]
+    S6 -->|nie| S5{5 razy?}
+    S5 -->|tak| K5[Ponowne dopasowanie do głowy]
+    S5 -->|nie| SCR{Przewijanie włączone<br/>i 2+ mrugnięcia?}
 
-    SCR -->|tak| SOFF[Wyłącz scroll]
-    SOFF --> S2{N = 2?}
+    SCR -->|tak| SOFF[Wyłącz przewijanie głową]
+    SOFF --> S2{2 mrugnięcia?}
     S2 -->|tak| PEND([Koniec])
     S2 -->|nie| S4A
 
-    SCR -->|nie| S4A{N = 4<br/>i scroll wyłączony?}
-    S4A -->|tak| SON[Włącz scroll]
-    S4A -->|nie| SCRC{Scroll aktywny?}
+    SCR -->|nie| S4A{4 mrugnięcia<br/>a przewijanie wyłączone?}
+    S4A -->|tak| SON[Włącz przewijanie głową]
+    S4A -->|nie| SCRC{Przewijanie aktywne?}
 
     SON --> PEND
     SCRC -->|tak| PEND
-    SCRC -->|nie| N1{N = 1?}
-    N1 -->|tak| LPM[Pojedyncze kliknięcie LPM]
-    N1 -->|nie| N2{N = 2?}
-    N2 -->|tak| DBL[Podwójne kliknięcie LPM]
-    N2 -->|nie| N3{N = 3?}
-    N3 -->|tak| PPM[Kliknięcie PPM]
+    SCRC -->|nie| N1{1 mrugnięcie?}
+    N1 -->|tak| LPM[Zwykłe kliknięcie lewym]
+    N1 -->|nie| N2{2 mrugnięcia?}
+    N2 -->|tak| DBL[Podwójne kliknięcie lewym]
+    N2 -->|nie| N3{3 mrugnięcia?}
+    N3 -->|tak| PPM[Kliknięcie prawym]
     N3 -->|nie| PEND
 
-    LPM --> Q[Wyślij kliknięcie]
+    LPM --> Q[Wyślij do komputera]
     DBL --> Q
     PPM --> Q
-    Q --> U{Połączenie USB?}
-    U -->|tak| USBM[Mysz przez USB]
-    U -->|nie| BLEM[Mysz przez Bluetooth]
+    Q --> U{Podłączony kabel USB?}
+    U -->|tak| USBM[Przez kabel]
+    U -->|nie| BLEM[Przez Bluetooth]
     DBG --> PEND
     K5 --> PEND
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef decision fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#854d0e
-    classDef io fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
+    classDef connect fill:#ccfbf1,stroke:#0d9488,stroke-width:2px,color:#115e59
+    classDef success fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#14532d
+    classDef setup fill:#e0e7ff,stroke:#6366f1,stroke-width:2px,color:#3730a3
     class P,PEND startEnd
-    class DBG,K5,SOFF,SON,LPM,DBL,PPM,Q process
+    class SOFF,SON,Q process
+    class DBG,K5 setup
+    class LPM,DBL,PPM success
     class S6,S5,SCR,S2,S4A,SCRC,N1,N2,N3,U decision
-    class USBM,BLEM io
+    class USBM,BLEM connect
 ```
 
-### 10. Wysyłanie ruchu kursora
+### 10. Jak głowa rusza kursorem na ekranie?
 
 ```mermaid
-%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'lineColor': '#475569', 'clusterBkg': '#f8fafc', 'clusterBorder': '#cbd5e1', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569' }}}%%
+%%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart LR
-    R([Ruch głowy X/Y]) --> SC{Tryb scrolla?}
-    SC -->|tak| WH["Przewijanie: ruch w górę/dół ÷ 7<br/>próg kiwania 3°/s"]
-    SC -->|nie| MV[Przesunięcie kursora]
-    WH --> CH{Połączenie USB?}
+    R([Poruszasz głową]) --> SC{Tryb przewijania<br/>strony włączony?}
+    SC -->|tak| WH[Kiwanie głową = scroll w górę/dół]
+    SC -->|nie| MV[Ruch głowy = ruch kursora]
+    WH --> CH{Kabel USB?}
     MV --> CH
-    CH -->|tak| UM[Wyślij przez USB]
+    CH -->|tak| UM[Wyślij przez kabel]
     CH -->|nie| BM{Bluetooth połączony?}
-    BM -->|tak| BL[Wyślij przez Bluetooth]
-    BM -->|nie| X([Brak wysyłki])
+    BM -->|tak| BL[Wyślij bezprzewodowo]
+    BM -->|nie| X([Nic nie wysyła — brak połączenia])
 
-    classDef startEnd fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#4c1d95
-    classDef process fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
-    classDef decision fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#854d0e
-    classDef io fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
+    classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
+    classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
+    classDef connect fill:#ccfbf1,stroke:#0d9488,stroke-width:2px,color:#115e59
     class R,X startEnd
     class WH,MV process
     class SC,CH,BM decision
-    class UM,BL io
+    class UM,BL connect
 ```
 
-### Legenda kolorów (wszystkie diagramy)
+### Legenda kolorów
 
-| Kolor | Znaczenie |
-|-------|-----------|
-| **Fiolet** | Start / koniec (terminator) |
-| **Niebieski** | Proces — obliczenia, stany |
-| **Żółty** | Decyzja — warunek tak/nie |
-| **Zielony** | Wejście/wyjście — USB, Bluetooth, urządzenia |
-| **Czerwony** | Odrzucenie, błąd, zatrzymanie |
-| **Szary** | Notatka / wyzwalacz pomocniczy |
+| Kolor | Co oznacza |
+|-------|------------|
+| **Fiolet** | Start albo koniec |
+| **Niebieski** | Krok — coś się dzieje |
+| **Bursztyn / żółty** | Pytanie — tak czy nie? |
+| **Zielony jasny** | Wejście — czujniki, sygnały do urządzenia |
+| **Pomarańczowy** | Wyjście — kursor, dioda, logi |
+| **Indygo** | „Mózg” — główne przetwarzanie |
+| **Indygo jasny** | Kalibracja, tryb serwisowy |
+| **Miętowy** | Wysyłka do komputera (USB / Bluetooth) |
+| **Zielony mocny** | Udana akcja — klik, ruch kursora |
+| **Czerwony** | Błąd lub odrzucenie |
+| **Pomarańczowy jasny** | Ostrzeżenie — ignoruj, bez kliku |
+| **Szary** | Wskazówka lub wyzwalacz |
 
-Tło każdego schematu: **białe** — wymuszone dyrektywą `init` na początku każdego bloku Mermaid (`theme: default`, `darkMode: false`, tło `#ffffff`; czytelne też w Dark Mode na GitHubie). Grupy mają delikatne tło `#f8fafc`.
+Tło schematów: **białe** (czytelne też w ciemnym motywie GitHuba).
 
-**Podgląd:** GitHub, GitLab, VS Code / Cursor — podgląd Markdown z Mermaid. Etykiety opisują **co robi system**, nie nazwy funkcji z kodu.
+**Podgląd:** GitHub, GitLab, VS Code / Cursor. Szczegóły techniczne (czasy w ms, progi) są w sekcjach wyżej w README — tu chodzi o **zrozumienie idei**, nie parametrów.
 
 ---
 
