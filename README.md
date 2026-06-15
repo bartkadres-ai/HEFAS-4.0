@@ -434,11 +434,11 @@ flowchart TD
 flowchart TD
     R([START — odczyt żyroskopu]) --> OFF[Korekcja offsetu kalibracji]
     OFF --> BLEW[Aktywacja BLE ruchem]
-    BLEW --> PROGX{Czy |Gx| > próg?}
+    BLEW --> PROGX{Czy Gx powyżej progu?}
     PROGX -->|NIE| GX0[Gx := 0]
     PROGX -->|TAK| GX1[Zachowanie Gx]
     GX0 --> PROGZ
-    GX1 --> PROGZ{Czy |Gz| > próg?<br/>tryb scroll: próg podwyższony}
+    GX1 --> PROGZ{Czy Gz powyżej progu?<br/>tryb scroll: próg wyższy}
     PROGZ -->|NIE| GZ0[Gz := 0]
     PROGZ -->|TAK| GZ1[Zachowanie Gz]
     GZ0 --> MARTWA
