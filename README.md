@@ -327,27 +327,40 @@ flowchart LR
 
 ### 2. Sekwencja inicjalizacji (START)
 
-Diagram obejmuje `setup()` oraz zakończenie kalibracji w pierwszych cyklach `loop()`. **Kalibracja nie blokuje** reszty startu — trwa w tle ok. 3 s. **Tryb Debug nie bierze udziału** w tej sekwencji (domyślnie wyłączony; logi Serial dopiero po 6× mrugnięciu).
+Diagram: `setup()` → pierwsze cykle `loop()` → koniec kalibracji. **Przy starcie zawsze gałąź „Nie”** (`czyDebugWlaczony = false`). Gałąź „Tak” dotyczy **późniejszego** włączenia **6× mrugnięciem**. **SSID „HEFAS-Debug”** to sieć WiFi panelu serwisowego — **nie** tryb Debug.
 
 ```mermaid
 %%{init: { 'theme': 'default', 'themeVariables': { 'darkMode': false, 'background': '#ffffff', 'mainBkg': '#ffffff', 'primaryColor': '#ffffff', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'primaryTextColor': '#1e293b', 'secondaryTextColor': '#334155', 'lineColor': '#64748b', 'primaryBorderColor': '#94a3b8', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#94a3b8', 'edgeLabelBackground': '#ffffff', 'noteBkgColor': '#f8fafc', 'noteTextColor': '#475569', 'fontFamily': 'arial' }}}%%
 flowchart TD
-    START([Start programu — setup]) --> WAIT["Stabilizacja zasilania<br/>2 s"]
-    WAIT --> HW["Port Serial, dioda LED,<br/>magistrala I2C do MPU6050"]
-    HW --> MPU{"Czujnik MPU6050<br/>odpowiada?"}
-    MPU -->|Nie| FATAL["Miganie diody — błąd sprzętu<br/>program zatrzymany"]
-    MPU -->|Tak| KAL["Rozpoczęcie kalibracji<br/>asynchronicznej w tle"]
-    KAL --> USB["Inicjalizacja myszy USB<br/>i klawiatury USB"]
-    USB --> ZAS["Odczyt stanu zasilania<br/>kabel USB, ogniwo"]
-    ZAS --> WIFI["Sieć WebDebug<br/>HEFAS-Debug · 192.168.4.1"]
-    WIFI --> CHAN{"Komputer widzi mysz<br/>po kablu USB?"}
-    CHAN -->|Tak| USBONLY["Bluetooth wyłączony<br/>sterowanie po USB"]
-    CHAN -->|Nie| BLEON["Reklama Bluetooth włączona<br/>urządzenie HEFAS 4.0"]
-    USBONLY --> LOOP
-    BLEON --> LOOP([Koniec setup — wejście w pętlę główną])
+    START([Start programu — setup]) --> WAIT["Stabilizacja zasilania 2 s"]
+    WAIT --> HW["Dioda LED · magistrala I2C · MPU6050"]
+    HW --> MPU{"MPU6050 odpowiada?"}
+    MPU -->|Nie| FATAL["Miganie diody · zatrzymanie"]
+    MPU -->|Tak| KAL["Start kalibracji async w tle"]
+    KAL --> USB["Inicjalizacja myszy i klawiatury USB"]
+    USB --> ZAS["Odczyt zasilania USB / ogniwo"]
+    ZAS --> AP["Uruchomienie punktu WiFi<br/>HEFAS-Debug · 192.168.4.1"]
 
-    LOOP -.-> KALLOOP["W pętli: kalibracja trwa ~3 s<br/>offsety żyroskopu i czujnika oka"]
-    KALLOOP -.-> READY["Kalibracja zakończona<br/>dioda 3× · system gotowy"]
+    AP --> DBG1{"Tryb Debug?<br/>czyDebugWlaczony"}
+    DBG1 -->|Nie · przy starcie| D1N["Serial: bez logów setup<br/>tylko adres punktu WiFi"]
+    DBG1 -->|Tak| D1Y["Serial: banner startu<br/>MPU OK · USB OK · zasilanie · BLE"]
+    D1N --> CHAN
+    D1Y --> CHAN
+
+    CHAN{"Mysz widoczna po USB?"}
+    CHAN -->|Tak| USBONLY["Bluetooth wyłączony"]
+    CHAN -->|Nie| BLEON["Reklama Bluetooth HEFAS 4.0"]
+    USBONLY --> LOOP
+    BLEON --> LOOP([Koniec setup · wejście w loop])
+
+    LOOP -.-> KALLOOP["W loop: dokończenie kalibracji ~3 s"]
+    KALLOOP -.-> READY["Kalibracja OK · LED 3× · systemGotowy"]
+
+    READY --> DBG2{"Tryb Debug?<br/>czyDebugWlaczony"}
+    DBG2 -->|Nie · domyślnie| D2N["Panel WiFi: wykresy · logi KAL · pauza<br/>Serial: bez TCRT/RUCH<br/>diagnostyka wyłączona"]
+    DBG2 -->|Tak · 6× mrugnięcie| D2Y["Panel WiFi: + SERIA · KLIK · SCROLL<br/>Serial: banner GOTOWY · TCRT · RUCH co 500 ms<br/>diagnostyka włączona"]
+    D2N --> KON([Praca normalna])
+    D2Y --> KON
 
     classDef startEnd fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     classDef process fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
@@ -355,23 +368,28 @@ flowchart TD
     classDef decision fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#78350f
     classDef branch fill:#e0e7ff,stroke:#6366f1,stroke-width:2px,color:#3730a3
     classDef async fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d
-    class START,LOOP startEnd
-    class WAIT,HW,USB,ZAS,WIFI process
+    classDef dbgNo fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#334155
+    classDef dbgYes fill:#fef3c7,stroke:#ca8a04,stroke-width:2px,color:#713f12
+    class START,LOOP,KON startEnd
+    class WAIT,HW,USB,ZAS,AP process
     class KAL,KALLOOP,READY async
     class FATAL bad
-    class MPU,CHAN decision
+    class MPU,CHAN,DBG1,DBG2 decision
     class USBONLY,BLEON branch
+    class D1N,D2N dbgNo
+    class D1Y,D2Y dbgYes
 ```
 
-**Uwagi (nie są na schemacie, ale ważne):**
+**Legenda gałęzi Debug:**
 
-| Temat | Zachowanie |
-|--------|------------|
-| **Debug** | Domyślnie **wyłączony** — brak szczegółowych logów Serial przy starcie. Włączenie: **6× mrugnięcie**. |
-| **USB tylko do ładowania** | Kabel bez połączenia myszy z hostem → **Bluetooth pozostaje włączony** (jak wiersz „Nie” przy rozgałęzieniu). |
-| **Bluetooth po starcie** | W `loop()` reklama może **uśnąć po 5 min** bez ruchu; budzenie: ruch głowy lub mrugnięcie. Przy podłączeniu USB-HID reklama jest **wyłączana**. |
-| **Gotowość systemu** | Pełna obsługa mrugnięć i HID dopiero po **`systemGotowy`** (koniec kalibracji w pętli), mimo że WebDebug i pętla już działają. |
-| **WebDebug** | Działa **niezależnie** od trybu Debug i od zakończenia kalibracji. |
+| | **Nie** (domyślnie przy starcie) | **Tak** (włączenie 6× mrugnięciem w trakcie pracy) |
+|---|----------------------------------|-----------------------------------------------------|
+| **Serial w setup** | Cichy (poza adresem punktu WiFi) | Banner, status MPU/USB/zasilania |
+| **Po kalibracji** | Bez banneru GOTOWY | Banner z mapą mrugnięć |
+| **diagnostyka()** | Nie wysyła danych | TCRT i RUCH co ~500 ms |
+| **Panel WiFi** | Wykresy, pauza, rekalibracja, logi `[KAL]` | Dodatkowo szczegółowe logi mrugnięć i kliknięć |
+
+**Poza diagramem:** kabel tylko do ładowania → gałąź „Nie” przy USB (BT włączony); BT może uśnąć po 5 min bez ruchu; pełne mrugnięcia/HID dopiero po `systemGotowy`.
 
 ### 3. Pętla główna — jeden cykl
 
