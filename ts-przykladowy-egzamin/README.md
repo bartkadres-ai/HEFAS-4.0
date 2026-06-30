@@ -1,8 +1,12 @@
-# Teoria Sterowania — przykładowy egzamin
+# Teoria Sterowania — przykładowy egzamin (pełne rozwiązanie)
 
-To jest **osobny plik README**, niepowiązany z głównym projektem.
+To jest osobny materiał, niezależny od głównego projektu.
 
-Poniżej jest kompletne rozwiązanie **wszystkich 4 zadań**, krok po kroku, w stylu egzaminowym.
+---
+
+## Schemat bazowy (zad. 1 i 2)
+
+![Schemat sprzężenia zwrotnego](./schemat_sprzezenie_zwrotne.png)
 
 ---
 
@@ -10,174 +14,93 @@ Poniżej jest kompletne rozwiązanie **wszystkich 4 zadań**, krok po kroku, w s
 
 ## Dane
 
-Obiekt:
+$$
+\hat g(s)=\frac{1}{s(s+6)}, \qquad \hat c(s)=k_p
+$$
 
-`g(s) = 1 / ( s * (s + 6) )`
-
-Regulator:
-
-`c(s) = k_p`
-
-Układ:
-
-![Schemat sprzężenia zwrotnego](./schemat_sprzezenie_zwrotne.png)
-
-Wymagania:
-
-- stabilność,
-- błąd położeniowy `e_p% <= 10%`,
-- przeregulowanie `p% <= 5%`,
-- czas ustalania `t_2% <= 2 s`,
-- czas narastania `t_0.9` możliwie najmniejszy.
-
----
+Wymagania: stabilność, \(e_{p\%}\le 10\%\), \(p\%\le 5\%\), \(t_{2\%}\le 2s\), \(t_{0.9}\) minimalne.
 
 ## Krok 1 — transmitancja zastępcza
 
-`g_z(s) = c(s)g(s) / (1 + c(s)g(s))`
+$$
+\hat g_z(s)=\frac{\hat c(s)\hat g(s)}{1+\hat c(s)\hat g(s)}
+=\frac{k_p\frac{1}{s(s+6)}}{1+k_p\frac{1}{s(s+6)}}
+=\frac{k_p}{s^2+6s+k_p}
+$$
 
-`g_z(s) = k_p * 1/(s(s+6)) / (1 + k_p * 1/(s(s+6)))`
+## Krok 2 — stabilność
 
-`g_z(s) = k_p / (s^2 + 6s + k_p)`
+Brak skróceń w \(\hat c(s)\hat g(s)\).  
+Równanie charakterystyczne:
 
----
+$$
+s^2+6s+k_p=0
+$$
 
-## Krok 2 — stabilność wewnętrzna
-
-Sprawdzamy układ otwarty:
-
-`c(s)g(s) = k_p / (s(s+6))`
-
-Nie ma upraszczających skróceń.
-
-Mianownik układu zamkniętego:
-
-`s^2 + 6s + k_p`
-
-Dla układu II rzędu warunek stabilności:
-
-- współczynnik przy `s^2` dodatni,
-- współczynnik przy `s` dodatni,
-- wyraz wolny dodatni.
-
-Stąd:
-
-`k_p > 0`
-
----
+Dla II rzędu: współczynniki dodatnie \(\Rightarrow k_p>0\).
 
 ## Krok 3 — błąd położeniowy
 
-`e_p = |1 - g_z(0)|`
+$$
+e_p=\left|1-\hat g_z(0)\right|
+=\left|1-\frac{k_p}{k_p}\right|=0
+$$
 
-`g_z(0) = k_p / k_p = 1`
-
-Czyli:
-
-`e_p = 0`
-
-oraz:
-
-`e_p% = 0% <= 10%`
-
-Warunek spełniony automatycznie.
-
----
+$$
+e_{p\%}=0\%\le 10\%
+$$
 
 ## Krok 4 — linia pierwiastkowa
 
-Dla:
-
-`g(s) = 1 / (s(s+6))`
-
-mamy:
-
-- zera: brak,
-- bieguny: `p1 = 0`, `p2 = -6`.
-
+Zera: brak, bieguny: \(p_1=0,\ p_2=-6\).  
 Centroid:
 
-`c = (0 + (-6)) / 2 = -3`
+$$
+c=\frac{0+(-6)}{2}=-3
+$$
 
-Asymptoty:
-
-- liczba asymptot: `2`,
-- kąty: `+90 deg` i `-90 deg`.
-
-Punkt rozwidlenia:
-
-`s0 = -3`
-
-Rysunek:
+Asymptoty: \(\pm 90^\circ\).  
+Punkt rozwidlenia: \(s_0=-3\).
 
 ![Linia pierwiastkowa](./zad1_linia_pierwiastkowa.png)
 
----
+## Krok 5 — warunki \(p\%\) i \(t_{2\%}\)
 
-## Krok 5 — warunki na przeregulowanie i czas ustalania
+Z obszaru dopuszczalnego (rysunek):
 
-Z wykresu:
+$$
+s_1=-2.25,\qquad s_2=-3+3j
+$$
 
-- obszar dopuszczalny dla `p% <= 5%` wyznaczają proste 45 stopni,
-- warunek `t_2% <= 2 s` daje granicę `Re(s) <= -2.25`.
+Wzmocnienia graniczne:
 
-Z przecięć odczytujemy dwa punkty graniczne:
+$$
+k_{p1}=-s(s+6)\big|_{s=-2.25}=8.44
+$$
 
-- `s1 = -2.25`
-- `s2 = -3 + 3j`
+$$
+k_{p2}=-s(s+6)\big|_{s=-3+3j}=18
+$$
 
-Teraz liczymy odpowiadające im `k_p`.
+Zatem:
 
-Dla `s1 = -2.25`:
+$$
+k_p\in[8.44,\ 18]
+$$
 
-`k_p1 = -s(s+6)|s=-2.25`
+## Krok 6 — minimalizacja \(t_{0.9}\)
 
-`k_p1 = -(-2.25)(3.75) = 8.44`
+Wybór punktu najbardziej oddalonego od zera w dopuszczalnym obszarze:
 
-Dla `s2 = -3 + 3j`:
+$$
+k_p=18
+$$
 
-`k_p2 = -s(s+6)|s=-3+3j`
+## Odpowiedź zad. 1
 
-`k_p2 = -(-3+3j)(3+3j) = 18`
-
-Stąd:
-
-`k_p in [8.44 , 18]`
-
-To spełnia warunki:
-
-- `p% <= 5%`
-- `t_2% <= 2 s`
-
----
-
-## Krok 6 — minimalizacja czasu narastania
-
-Chcemy, żeby `t_0.9` był możliwie najmniejszy.
-
-To oznacza, że wybieramy bieguny możliwie najdalej od zera, ale nadal w obszarze dopuszczalnym.
-
-Czyli wybieramy punkt:
-
-`s = -3 + 3j`
-
-co daje:
-
-`k_p = 18`
-
----
-
-## Odpowiedź do zadania 1
-
-`k_p = 18`
-
-Układ spełnia:
-
-- stabilność,
-- `e_p = 0`,
-- `p% <= 5%`,
-- `t_2% <= 2 s`,
-- `t_0.9` możliwie najmniejszy.
+$$
+\boxed{k_p=18}
+$$
 
 ---
 
@@ -185,148 +108,96 @@ Układ spełnia:
 
 ## Dane
 
-Obiekt:
+$$
+\hat g(s)=\frac{10}{s(s+10)},\qquad \hat c(s)=k_p
+$$
 
-`g(s) = 10 / ( s * (s + 10) )`
-
-Regulator:
-
-`c(s) = k_p`
-
-Układ:
-
-![Schemat sprzężenia zwrotnego](./schemat_sprzezenie_zwrotne.png)
-
-Wymagania:
-
-- stabilność,
-- błąd położeniowy `e_p% <= 10%`,
-- zapas fazy `z_f >= 45 deg`,
-- modułowa pulsacja przejścia `omega_m` możliwie największa.
-
----
+Wymagania: stabilność, \(e_{p\%}\le 10\%\), \(z_f\ge 45^\circ\), \(\omega_m\) maksymalne.
 
 ## Krok 1 — transmitancja układu otwartego
 
-`g_o(s) = c(s)g(s)`
-
-`g_o(s) = k_p * 10 / ( s * (s + 10) )`
-
-Po uproszczeniu:
-
-`g_o(s) = k_p / ( s * (1 + s/10) )`
-
----
+$$
+\hat g_o(s)=\hat c(s)\hat g(s)=k_p\frac{10}{s(s+10)}
+=\frac{k_p}{s\left(1+\frac{s}{10}\right)}
+$$
 
 ## Krok 2 — błąd położeniowy
 
-Układ ma biegun w zerze, więc jest typu I.
+Układ typu I (biegun w 0):
 
-Dlatego:
-
-`e_p = 0`
-
-oraz:
-
-`e_p% = 0% <= 10%`
-
----
+$$
+e_p=0,\qquad e_{p\%}=0\%\le 10\%
+$$
 
 ## Krok 3 — charakterystyka częstotliwościowa
 
-Podstawiamy:
+Po podstawieniu \(s=j\omega\):
 
-`s = j*omega`
-
-Wtedy:
-
-`g_o(j*omega) = k_p / ( j*omega * (1 + 0.1*j*omega) )`
+$$
+\hat g_o(j\omega)=\frac{k_p}{j\omega\left(1+0.1j\omega\right)}
+$$
 
 Moduł:
 
-`|g_o(j*omega)| = k_p / ( omega * sqrt(1 + (0.1*omega)^2 ) )`
+$$
+\left|\hat g_o(j\omega)\right|=\frac{k_p}{\omega\sqrt{1+(0.1\omega)^2}}
+$$
 
 Faza:
 
-`phi(omega) = -90 deg - arctg(0.1*omega)`
+$$
+\varphi(\omega)=-90^\circ-\arctan(0.1\omega)
+$$
 
----
-
-## Krok 4 — wykres uproszczony Bodego
-
-Rysunek:
+## Krok 4 — wykres Bodego (uproszczony)
 
 ![Uproszczony wykres Bodego](./zad2_bode_uproszczony.png)
 
-Dla `k_p = 1` odczytujemy:
+Dla \(k_p=1\):  
+\(\omega_m=1\ \text{rad/s}\), \(z_f=90^\circ\).
 
-- `omega_m = 1 rad/s`
-- `z_f = 90 deg`
+## Krok 5 — maksymalizacja \(\omega_m\) przy \(z_f\ge45^\circ\)
 
-Ponieważ zapas fazy jest duży, możemy zwiększać `k_p`.
+Wybieramy graniczny punkt:
 
----
+$$
+\omega_m=10\ \text{rad/s}
+$$
 
-## Krok 5 — maksymalizacja omega_m
+bo:
 
-Chcemy, aby punkt przecięcia z osią `0 dB` przesunął się jak najbardziej w prawo, ale tak, żeby nadal:
+$$
+\varphi(10)\approx -135^\circ \Rightarrow z_f=45^\circ
+$$
 
-`z_f >= 45 deg`
+## Krok 6 — wyznaczenie \(k_p\)
 
-Z uproszczonego wykresu widać, że graniczny punkt wypada przy:
+Potrzebny wzrost modułu o \(20\ \mathrm{dB}\):
 
-`omega_m = 10 rad/s`
+$$
+20\log k_p=20 \Rightarrow k_p=10
+$$
 
-bo wtedy:
+## Odczyty końcowe
 
-`phi(10) = -135 deg`
+$$
+\omega_m=10\ \text{rad/s},\quad
+z_f=45^\circ,\quad
+\omega_\varphi=100\ \text{rad/s},\quad
+z_m=40\ \text{dB}
+$$
 
-czyli:
+Stabilność:
 
-`z_f = 45 deg`
+$$
+z_f>0,\ z_m>0
+$$
 
----
+## Odpowiedź zad. 2
 
-## Krok 6 — wyznaczenie k_p
-
-Aby przesunąć moduł o `20 dB` do góry:
-
-`20log(k_p) = 20`
-
-Stąd:
-
-`k_p = 10`
-
----
-
-## Krok 7 — odczyt parametrów końcowych
-
-Dla `k_p = 10`:
-
-- `omega_m = 10 rad/s`
-- `z_f = 45 deg`
-- `omega_phi = 100 rad/s`
-- `z_m = 40 dB`
-
-Ponieważ:
-
-- `z_f > 0`
-- `z_m > 0`
-
-układ jest stabilny.
-
----
-
-## Odpowiedź do zadania 2
-
-`k_p = 10`
-
-Końcowe parametry:
-
-- `omega_m = 10 rad/s`
-- `z_f = 45 deg`
-- `omega_phi = 100 rad/s`
-- `z_m = 40 dB`
+$$
+\boxed{k_p=10}
+$$
 
 ---
 
@@ -334,199 +205,116 @@ Końcowe parametry:
 
 ## Dane
 
-Równanie obiektu:
+$$
+y''(t)+y(t)=u(t)
+$$
 
-`y''(t) + y(t) = u(t)`
-
-Układ sterowania:
+Schemat:
 
 ![Schemat stanu](./zad3_schemat_stan.png)
 
-Wymagania:
-
-- stabilność wewnętrzna,
-- `e_p = 0`,
-- `p% <= 5%`,
-- `t_2% <= 1 s`.
-
----
+Wymagania: stabilność wewn., \(e_p=0\), \(p\%\le5\%\), \(t_{2\%}\le1s\).
 
 ## Krok 1 — transmitancja obiektu
 
-Przechodzimy do Laplace'a przy zerowych warunkach początkowych:
+Przy zerowych warunkach początkowych:
 
-`s^2 Y(s) + Y(s) = U(s)`
+$$
+s^2Y(s)+Y(s)=U(s)\Rightarrow \hat g(s)=\frac{Y}{U}=\frac{1}{s^2+1}
+$$
 
-Stąd:
+Bieguny: \(p_{1,2}=\pm j\).
 
-`g(s) = Y(s)/U(s) = 1 / (s^2 + 1)`
+## Krok 2 — model stanu
 
-Bieguny:
+$$
+x_1=y,\qquad x_2=\dot y
+$$
 
-- `p1 = +j`
-- `p2 = -j`
+$$
+\dot x_1=x_2,\qquad \dot x_2=-x_1+u,\qquad y=x_1
+$$
 
-Układ otwarty nie jest asymptotycznie stabilny.
-
----
-
-## Krok 2 — realizacja w przestrzeni stanu
-
-Przyjmujemy zmienne stanu:
-
-- `x1 = y`
-- `x2 = y'`
-
-Wtedy:
-
-- `x1' = x2`
-- `x2' = -x1 + u`
-- `y = x1`
-
-Macierze:
-
-`A = [ [0, 1], [-1, 0] ]`
-
-`b = [ [0], [1] ]`
-
-`c = [1, 0]`
-
-`d = 0`
-
----
+$$
+A=\begin{bmatrix}0&1\\-1&0\end{bmatrix},\ 
+b=\begin{bmatrix}0\\1\end{bmatrix},\ 
+c=\begin{bmatrix}1&0\end{bmatrix},\ 
+d=0
+$$
 
 ## Krok 3 — sterowalność i obserwowalność
 
-Macierz sterowalności:
+$$
+W=[b\ Ab]=\begin{bmatrix}0&1\\1&0\end{bmatrix},\quad \det W=-1\neq0
+$$
 
-`W = [ b  Ab ]`
+$$
+V=\begin{bmatrix}c\\cA\end{bmatrix}
+=\begin{bmatrix}1&0\\0&1\end{bmatrix},\quad \det V=1\neq0
+$$
 
-`W = [ [0, 1], [1, 0] ]`
-
-`det(W) = -1 != 0`
-
-Układ jest sterowalny.
-
-Macierz obserwowalności:
-
-`V = [ c ; cA ]`
-
-`V = [ [1, 0], [0, 1] ]`
-
-`det(V) = 1 != 0`
-
-Układ jest obserwowalny.
-
----
-
-## Krok 4 — wybór biegunów układu zamkniętego
-
-Z warunków `p% <= 5%` i `t_2% <= 1 s` wybieramy:
-
-- `p_bar1 = -5`
-- `p_bar2 = -10`
-
-Czyli oczekiwany mianownik:
-
-`(s + 5)(s + 10) = s^2 + 15s + 50`
-
----
-
-## Krok 5 — sprzężenie zwrotne od stanu
+## Krok 4 — dobór biegunów zamkniętych
 
 Przyjmujemy:
 
-`u(t) = -k*x(t) + k_f*r(t)`
+$$
+\bar p_1=-5,\qquad \bar p_2=-10
+$$
 
-gdzie:
+Docelowy mianownik:
 
-`k = [k1  k2]`
+$$
+(s+5)(s+10)=s^2+15s+50
+$$
 
-Macierz układu zamkniętego:
+## Krok 5 — dobór \(k\)
 
-`A - b*k`
+Sterowanie:
 
-Wyznaczamy mianownik:
+$$
+u(t)=-kx(t)+k_fr(t),\qquad k=[k_1\ k_2]
+$$
 
-`det(sI - A + bk) = s^2 + k2*s + 1 + k1`
+$$
+\det(sI-A+bk)=s^2+k_2s+1+k_1
+$$
 
-Porównujemy z:
+Porównanie współczynników:
 
-`s^2 + 15s + 50`
+$$
+k_2=15,\qquad 1+k_1=50\Rightarrow k_1=49
+$$
 
-Stąd:
+$$
+k=[49\ 15]
+$$
 
-- `k2 = 15`
-- `1 + k1 = 50`
+## Krok 6 — dobór \(k_f\)
 
-czyli:
+Warunek \(e_p=0\Rightarrow \hat g_k(0)=1\):
 
-- `k1 = 49`
+$$
+\hat g_k(s)=\frac{k_f}{s^2+15s+50}
+$$
 
-Ostatecznie:
+$$
+\hat g_k(0)=\frac{k_f}{50}=1\Rightarrow k_f=50
+$$
 
-`k = [49  15]`
+## Krok 7 — wynik
 
----
+$$
+\hat g_k(s)=\frac{50}{(s+5)(s+10)}
+$$
 
-## Krok 6 — wyznaczenie k_f
+Wartości własne \(A-bk\): \(-5,\ -10\) \(\Rightarrow\) stabilny wewnętrznie.
 
-Warunek:
+## Odpowiedź zad. 3
 
-`e_p = 0`
-
-czyli:
-
-`g_k(0) = 1`
-
-Mamy:
-
-`g_k(s) = k_f / (s^2 + 15s + 50)`
-
-Zatem:
-
-`g_k(0) = k_f / 50 = 1`
-
-stąd:
-
-`k_f = 50`
-
----
-
-## Krok 7 — transmitancja końcowa
-
-`g_k(s) = 50 / (s^2 + 15s + 50)`
-
-czyli:
-
-`g_k(s) = 50 / ((s+5)(s+10))`
-
----
-
-## Krok 8 — stabilność wewnętrzna
-
-Wartości własne macierzy `A - bk`:
-
-- `lambda1 = -5`
-- `lambda2 = -10`
-
-Obie mają ujemne części rzeczywiste.
-
-Układ jest stabilny wewnętrznie.
-
----
-
-## Odpowiedź do zadania 3
-
-`k = [49  15]`
-
-`k_f = 50`
-
-`g_k(s) = 50 / ((s+5)(s+10))`
-
-Prawo sterowania:
-
-`u(t) = -49*x1(t) - 15*x2(t) + 50*r(t)`
+$$
+\boxed{k=[49\ 15],\quad k_f=50,\quad
+\hat g_k(s)=\frac{50}{(s+5)(s+10)}}
+$$
 
 ---
 
@@ -534,244 +322,155 @@ Prawo sterowania:
 
 ## Dane
 
-Równanie obiektu:
+$$
+y''(t)=u(t)
+$$
 
-`y''(t) = u(t)`
-
-Układ sterowania:
+Schemat:
 
 ![Schemat z obserwatorem](./zad4_schemat_obserwator.png)
 
-Wymagania:
+Wymagania: stabilność wewn., \(e_p=0\), \(p\%\le5\%\), \(t_{2\%}\le1s\).
 
-- stabilność wewnętrzna,
-- `e_p = 0`,
-- `p% <= 5%`,
-- `t_2% <= 1 s`.
+## Krok 1 — transmitancja i model obiektu
 
----
+$$
+s^2Y(s)=U(s)\Rightarrow \hat g(s)=\frac{1}{s^2}
+$$
 
-## Krok 1 — transmitancja obiektu
+$$
+A=\begin{bmatrix}0&1\\0&0\end{bmatrix},\ 
+b=\begin{bmatrix}0\\1\end{bmatrix},\ 
+c=\begin{bmatrix}1&0\end{bmatrix},\ d=0
+$$
 
-Po Laplace'ie:
+## Krok 2 — dobór \(k\) (gdy stan dostępny)
 
-`s^2 Y(s) = U(s)`
+Zakładamy:
 
-czyli:
+$$
+\bar p_1=\bar p_2=-10
+$$
 
-`g(s) = 1 / s^2`
+Docelowy mianownik:
 
-Bieguny:
+$$
+(s+10)^2=s^2+20s+100
+$$
 
-- `p1 = 0`
-- `p2 = 0`
+$$
+\det(sI-A+bk)=s^2+k_2s+k_1
+$$
 
-Układ otwarty jest niestabilny.
+Porównanie:
 
----
+$$
+k_2=20,\qquad k_1=100
+$$
 
-## Krok 2 — model stanu
+$$
+k=[100\ 20]
+$$
 
-Przyjmujemy:
-
-- `x1 = y`
-- `x2 = y'`
-
-Wtedy:
-
-- `x1' = x2`
-- `x2' = u`
-- `y = x1`
-
-Macierze:
-
-`A = [ [0, 1], [0, 0] ]`
-
-`b = [ [0], [1] ]`
-
-`c = [1, 0]`
-
-`d = 0`
-
-Układ jest:
-
-- sterowalny,
-- obserwowalny.
-
----
-
-## Krok 3 — najpierw zakładamy, że stan jest dostępny
-
-Dobieramy bieguny układu zamkniętego:
-
-- `p_bar1 = -10`
-- `p_bar2 = -10`
-
-Zatem:
-
-`(s + 10)^2 = s^2 + 20s + 100`
-
-Liczymy:
-
-`det(sI - A + bk) = s^2 + k2*s + k1`
-
-Porównujemy współczynniki:
-
-- `k2 = 20`
-- `k1 = 100`
-
-Czyli:
-
-`k = [100  20]`
-
----
-
-## Krok 4 — wyznaczenie k_f
+## Krok 3 — dobór \(k_f\)
 
 Warunek:
 
-`e_p = 0`
+$$
+e_p=0\Rightarrow \hat g_k(0)=1
+$$
 
-czyli:
+$$
+\hat g_k(s)=\frac{k_f}{s^2+20s+100}
+$$
 
-`g_k(0) = 1`
+$$
+\frac{k_f}{100}=1\Rightarrow k_f=100
+$$
 
-Mamy:
+## Krok 4 — projekt obserwatora
 
-`g_k(s) = k_f / (s^2 + 20s + 100)`
+Obserwator:
 
-Zatem:
-
-`g_k(0) = k_f / 100 = 1`
-
-Stąd:
-
-`k_f = 100`
-
-Końcowa transmitancja dla dostępnego stanu:
-
-`g_k(s) = 100 / (s+10)^2`
-
----
-
-## Krok 5 — projekt obserwatora
-
-Stan dokładny nie jest dostępny, więc używamy obserwatora:
-
-`x_tilde' = A*x_tilde + b*u + l*(y - y_tilde)`
-
-`y_tilde = c*x_tilde`
+$$
+\dot{\tilde x}=A\tilde x+bu+l(y-\tilde y),\qquad \tilde y=c\tilde x
+$$
 
 Przyjmujemy:
 
-`l = [l1  l2]^T`
+$$
+l=\begin{bmatrix}l_1\\l_2\end{bmatrix}
+$$
 
-Dobieramy bieguny obserwatora:
+Wybór biegunów obserwatora:
 
-- `mu1 = -5`
-- `mu2 = -5`
+$$
+\mu_1=\mu_2=-5
+$$
 
-Czyli:
+$$
+\det(\mu I-A+lc)=\mu^2+l_1\mu+l_2=(\mu+5)^2=\mu^2+10\mu+25
+$$
 
-`(mu + 5)^2 = mu^2 + 10mu + 25`
+Stąd:
 
-Liczymy:
+$$
+l_1=10,\qquad l_2=25
+$$
 
-`det(mu*I - A + l*c) = mu^2 + l1*mu + l2`
+$$
+l=\begin{bmatrix}10\\25\end{bmatrix}
+$$
 
-Porównujemy współczynniki:
+## Krok 5 — wynik końcowy
 
-- `l1 = 10`
-- `l2 = 25`
+Sterowanie:
 
-Czyli:
+$$
+u(t)=-k\tilde x(t)+k_fr(t)
+$$
 
-`l = [10  25]^T`
+czyli:
 
----
+$$
+k=[100\ 20],\quad k_f=100,\quad
+l=\begin{bmatrix}10\\25\end{bmatrix}
+$$
 
-## Krok 6 — sterowanie z obserwatorem
+Transmitancja zastępcza (zasada separacji):
 
-Prawo sterowania:
+$$
+\hat g_z(s)=\frac{100}{(s+10)^2}
+$$
 
-`u(t) = -k*x_tilde(t) + k_f*r(t)`
+Wartości własne układu rozszerzonego:
 
-gdzie:
+$$
+\{-10,-10,-5,-5\}
+$$
 
-- `k = [100  20]`
-- `k_f = 100`
+\(\Rightarrow\) stabilny wewnętrznie.
 
----
+## Odpowiedź zad. 4
 
-## Krok 7 — transmitancja końcowa
-
-Dzięki zasadzie separacji transmitancja zastępcza układu sterowania jest taka sama jak dla przypadku z dokładnie dostępnym stanem:
-
-`g_z(s) = 100 / (s+10)^2`
-
----
-
-## Krok 8 — stabilność wewnętrzna
-
-Wartości własne całego układu rozszerzonego:
-
-- z regulatora: `-10`, `-10`
-- z obserwatora: `-5`, `-5`
-
-Wszystkie mają ujemne części rzeczywiste.
-
-Układ jest stabilny wewnętrznie.
-
----
-
-## Odpowiedź do zadania 4
-
-`k = [100  20]`
-
-`k_f = 100`
-
-`l = [10  25]^T`
-
-`g_z(s) = 100 / (s+10)^2`
-
-Prawo sterowania:
-
-`u(t) = -k*x_tilde(t) + k_f*r(t)`
+$$
+\boxed{
+k=[100\ 20],\ 
+k_f=100,\ 
+l=\begin{bmatrix}10\\25\end{bmatrix},\ 
+\hat g_z(s)=\frac{100}{(s+10)^2}
+}
+$$
 
 ---
 
-# Odpowiedzi końcowe — wszystko w jednym miejscu
+# Odpowiedzi końcowe (zbiorczo)
 
-## Zadanie 1
-
-`k_p = 18`
-
-## Zadanie 2
-
-`k_p = 10`
-
-`omega_m = 10 rad/s`
-
-`z_f = 45 deg`
-
-`omega_phi = 100 rad/s`
-
-`z_m = 40 dB`
-
-## Zadanie 3
-
-`k = [49  15]`
-
-`k_f = 50`
-
-`g_k(s) = 50 / ((s+5)(s+10))`
-
-## Zadanie 4
-
-`k = [100  20]`
-
-`k_f = 100`
-
-`l = [10  25]^T`
-
-`g_z(s) = 100 / (s+10)^2`
+$$
+\boxed{
+\text{Zad.1: }k_p=18,\quad
+\text{Zad.2: }k_p=10,\quad
+\text{Zad.3: }k=[49\ 15],\ k_f=50,\quad
+\text{Zad.4: }k=[100\ 20],\ k_f=100,\ l=\begin{bmatrix}10\\25\end{bmatrix}
+}
+$$
