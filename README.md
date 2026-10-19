@@ -1,6 +1,6 @@
 # HEFAS 4.0 — sterowanie myszką ruchem głowy
 
-> **Nowa linia rozwoju:** migracja na **Arduino Nicla Vision** — projekt **HEFAS STM** w katalogu [`hefas-stm/`](hefas-stm/README.md) (ten katalog = wersja ESP32, referencja logiki).
+> **Nowa linia (Nicla Vision):** osobne repozytorium **[HEFAS-STM](https://github.com/bartkadres-ai/HEFAS-STM)** — IMU + **czujnik ToF VL53L1X** (bez kamery). To repo zostaje wersją ESP32 (referencja logiki).
 
 System bezdotykowej obsługi kursora myszy ruchami głowy dla osób z niepełnosprawnościami.  
 **HEFAS** = Head-controlled Electronic Functional Assistive System.
