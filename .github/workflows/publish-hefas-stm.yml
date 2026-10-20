@@ -1,0 +1,41 @@
+# Jednorazowe (lub ręczne) skopiowanie gałęzi hefas-stm → repo Hefas-STM
+#
+# Sekret w HEFAS-4.0: HEFAS_STM_PUSH_TOKEN = fine-grained PAT z Contents: Read and Write na Hefas-STM
+
+name: Publish to Hefas-STM
+
+on:
+  workflow_dispatch:
+    inputs:
+      delete_hefas_stm_branch:
+        description: Usuń gałąź hefas-stm z HEFAS-4.0 po udanym pushu
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout hefas-stm
+        uses: actions/checkout@v4
+        with:
+          ref: hefas-stm
+          fetch-depth: 0
+
+      - name: Push to Hefas-STM
+        env:
+          TOKEN: ${{ secrets.HEFAS_STM_PUSH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "Brak sekretu HEFAS_STM_PUSH_TOKEN w ustawieniach repo HEFAS-4.0"
+            exit 1
+          fi
+          git remote add target "https://x-access-token:${TOKEN}@github.com/bartkadres-ai/Hefas-STM.git"
+          git push target HEAD:main --force
+
+      - name: Delete hefas-stm branch on HEFAS-4.0
+        if: inputs.delete_hefas_stm_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X DELETE repos/${{ github.repository }}/git/refs/heads/hefas-stm || true

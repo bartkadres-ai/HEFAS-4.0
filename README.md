@@ -1,5 +1,7 @@
 # HEFAS 4.0 — sterowanie myszką ruchem głowy
 
+> **Wersja Nicla Vision (STM):** osobne repo **[Hefas-STM](https://github.com/bartkadres-ai/Hefas-STM)** — cały firmware i rozwój na płytce Arduino Nicla Vision.
+
 System bezdotykowej obsługi kursora myszy ruchami głowy dla osób z niepełnosprawnościami.  
 **HEFAS** = Head-controlled Electronic Functional Assistive System.
 
