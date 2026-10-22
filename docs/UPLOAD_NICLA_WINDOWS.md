@@ -80,6 +80,8 @@ W folderze pakietu PlatformIO (ścieżka u Ciebie może być taka):
 
 ## Krok 3 — Upload w PlatformIO
 
+W PlatformIO wybierz środowisko **`nicla_vision`** (w `platformio.ini` jest `default_envs = nicla_vision` — inaczej IDE wgrywa **dwa** env naraz i oba mogą paść).
+
 **Ręczny DFU (domyślne, bez COM):**
 
 ```bash
