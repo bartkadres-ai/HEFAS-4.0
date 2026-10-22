@@ -4,4 +4,6 @@ Płytka = kompletny węzeł: **STM32H747** (M7+M7), **LSM6DSOX**, **GC2145**, **
 
 HEFAS STM w C++/mbed: IMU → kursor; onboard ranging → impulsy kliknięć (docelowo np. zacisk szczęki / policzek — montaż okularów, nie osobny czujnik). Kamera i ML nie są wymagane na tej ścieżce.
 
-Otwarte: BLE HID, USBKeyboard (gest), podział M7/M4, strojenie `config.h` na ciele.
+Zaimplementowane (jak HEFAS 4.0): WebDebug WiFi (`HEFAS-Debug`), routing USB/BLE myszy, gest Ctrl+Win+O (USB), LED status, logi FSM.
+
+Otwarte: weryfikacja BLE HID na hostach, PMIC/bateria w panelu, podział M7/M4, strojenie ToF pod szczękę w `config.h`.
