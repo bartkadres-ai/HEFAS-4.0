@@ -5,7 +5,8 @@
 #ifndef HEFAS_CONFIG_H
 #define HEFAS_CONFIG_H
 
-#define HID_PREFER_BLE                 0
+#define BLE_AKTYWNY                    1
+#define BLE_NAZWA_URZADZENIA           "HEFAS Mouse"
 
 // =================== RUCH KURSORA (IMU) ============================
 #define CZULOSC_MYSZY                  0.4f
@@ -35,6 +36,9 @@
 #define TOF_OFFSET_TRIGGER_MM          18
 #define TOF_OFFSET_RELEASE_MM          8
 #define TOF_OFFSET_BLISKIE_MM          5
+
+#define OFFSET_TRIGGER                 TOF_OFFSET_TRIGGER_MM
+#define OFFSET_RELEASE                 TOF_OFFSET_RELEASE_MM
 
 // =================== PARAMETRY MRUGNIĘĆ ===========================
 #define CZAS_MIN_MRUG_MS               42
@@ -85,5 +89,15 @@
 #define CZAS_STABILIZACJI_START_MS     2000
 
 #define DEBUG_SERIAL_DOMYSLNIE         0
+
+#define WEBDEBUG_AKTYWNY               true
+#define WEBDEBUG_SSID                  "HEFAS-Debug"
+#define WEBDEBUG_HASLO                 "hefas1234"
+
+#define OKRES_MIG_LED_BRAK_POL_MS      2000
+#define CZAS_MIG_LED_BRAK_POL_ON_MS    100
+
+#define CZAS_BEZCZYNNOSCI_BLE_MS       (5UL * 60UL * 1000UL)
+#define PROG_PROBUDZENIA_BLE_DEG_S     12.0f
 
 #endif

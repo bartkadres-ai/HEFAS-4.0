@@ -29,6 +29,7 @@ public:
     bool eyeClosedRaw() const { return _virtualClosed; }
     int rawMm() const { return _rawMm; }
     float baselineMm() const { return _baseline; }
+    float filteredMm() const { return _filtered; }
     float fastMm() const { return _fast; }
 
 private:

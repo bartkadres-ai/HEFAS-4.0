@@ -1,38 +1,35 @@
 #include "hid/mouse_output.h"
 
 #include "USBMouse.h"
+#include "hid/hid_transport.h"
 
 #include "config.h"
 
-static USBMouse s_mouse;
-
-bool MouseOutput::begin() {
-#if HID_PREFER_BLE
-    // TODO: BLE HID (Murata 1DX) — osobna ścieżka gdy USB niedostępny.
+bool MouseOutput::begin(HidTransport& transport) {
+    _hid = &transport;
     return true;
-#else
-    return true;
-#endif
 }
 
 bool MouseOutput::isConnected() const {
-    return true;
+    return _hid && _hid->canSend();
 }
 
 void MouseOutput::move(int8_t dx, int8_t dy, int8_t scroll) {
-    if (scroll != 0) {
-        s_mouse.scroll(scroll);
-    } else {
-        s_mouse.move(dx, dy);
+    if (_hid) {
+        _hid->move(dx, dy, scroll);
     }
 }
 
 void MouseOutput::press(uint8_t button) {
-    s_mouse.press(button);
+    if (_hid) {
+        _hid->press(button);
+    }
 }
 
 void MouseOutput::release(uint8_t button) {
-    s_mouse.release(button);
+    if (_hid) {
+        _hid->release(button);
+    }
 }
 
 void MouseOutput::clickLeft() {

@@ -37,6 +37,13 @@ public:
     bool dragActive() const { return _dragActive; }
     bool blocksCursorGesture() const;
 
+    bool eyeConfirmedClosed() const { return _eyeConfirmedClosed; }
+    uint8_t impulseCount() const { return _impulseCount; }
+    unsigned long lastImpulseMs() const { return _lastImpulseMs; }
+    unsigned long firstImpulseMs() const { return _firstImpulseMs; }
+    unsigned long lastGapMs() const { return _lastGapMs; }
+    unsigned long seriesDeadlineMs() const { return _seriesDeadlineMs; }
+
 private:
     bool _eyeConfirmedClosed = false;
     uint8_t _closedSamples = 0;

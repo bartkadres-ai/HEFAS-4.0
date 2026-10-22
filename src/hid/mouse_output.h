@@ -5,12 +5,14 @@
 
 #include "config.h"
 
+class HidTransport;
+
 /**
- * Warstwa HID — USB mysz (USBMouse) z opcjonalnym BLE w przyszłości.
+ * Warstwa HID — kolejka kliknięć + routing USB/BLE (jak HEFAS 4.0).
  */
 class MouseOutput {
 public:
-    bool begin();
+    bool begin(HidTransport& transport);
     bool isConnected() const;
 
     void move(int8_t dx, int8_t dy, int8_t scroll = 0);
@@ -21,7 +23,6 @@ public:
     void clickRight();
     void doubleClickLeft();
 
-    /** Maszyna stanów dla kliknięć (kolejka jak w HEFAS 4.0). */
     void queueClick(uint8_t button, bool doubleLeft);
     void tickClickFsm();
 
@@ -38,6 +39,7 @@ private:
         bool doubleLeft;
     };
 
+    HidTransport* _hid = nullptr;
     ClickState _state = ClickState::Idle;
     uint8_t _btn = 0;
     bool _doubleLeft = false;
