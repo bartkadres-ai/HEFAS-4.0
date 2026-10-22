@@ -23,7 +23,7 @@ Cannot configure port ... PermissionError(13, 'Urządzenie dołączone do komput
 
 1. Zamknij monitor szeregowy.
 2. **Double-tap RESET** → od razu **Upload** (bez wchodzenia w monitor).
-3. Upewnij się, że masz aktualny `platformio.ini` z gałęzi `hefas-stm` (`board_upload.use_1200bps_touch = no`).
+3. Upewnij się, że w `platformio.ini` jest **`[platformio]`** i `board_upload.use_1200bps_touch = no` (HEFAS-4.0, gałąź `hefas-stm`).
 4. Opcjonalnie: jedno **RESET** (tryb aplikacji), sprawdź w Menedżerze urządzeń czy **COM8** jest bez błędu — wtedy możesz spróbować `pio run -e nicla_vision_auto -t upload` (auto-reset przez COM).
 
 ---
