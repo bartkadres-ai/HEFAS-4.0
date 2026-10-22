@@ -1,6 +1,34 @@
 # Wgrywanie firmware — Nicla Vision (Windows + PlatformIO)
 
-## Objaw (twój błąd)
+## Szybka procedura (zalecana na Windows)
+
+1. Zamknij **Serial Monitor** i wszystko, co trzyma **COM** (Arduino IDE, PuTTY).
+2. **Double-tap RESET** (wejście w DFU / bootloader).
+3. W VS Code / Cursor: **Upload** (środowisko domyślne `nicla_vision` — **bez** otwierania COM8).
+
+W `platformio.ini` wyłączone jest automatyczne **1200 baud na COM** — inaczej często dostajesz błąd na **COM8** (patrz niżej).
+
+---
+
+## Objaw: COM8 / PermissionError (31)
+
+```text
+Auto-detected: COM8
+Cannot configure port ... PermissionError(13, 'Urządzenie dołączone do komputera nie działa.', None, 31)
+```
+
+**Co to znaczy:** PlatformIO próbowało użyć portu **COM8** (reset do bootloadera przez 1200 baud), a port **nie działa** — bo np. płytka jest już w **DFU** (wtedy CDC/COM często „nie działa”), port jest **zajęty**, albo sterownik szeregowy jest uszkodzony.
+
+**Co zrobić:**
+
+1. Zamknij monitor szeregowy.
+2. **Double-tap RESET** → od razu **Upload** (bez wchodzenia w monitor).
+3. Upewnij się, że masz aktualny `platformio.ini` z gałęzi `hefas-stm` (`board_upload.use_1200bps_touch = no`).
+4. Opcjonalnie: jedno **RESET** (tryb aplikacji), sprawdź w Menedżerze urządzeń czy **COM8** jest bez błędu — wtedy możesz spróbować `pio run -e nicla_vision_auto -t upload` (auto-reset przez COM).
+
+---
+
+## Objaw: LIBUSB / DFU Error 74
 
 ```text
 Cannot open DFU device 2341:035f found on devnum X (LIBUSB_ERROR_NOT_FOUND)
