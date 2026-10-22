@@ -18,7 +18,7 @@ pio run -e nicla_vision
 
 Aktualizacja: `git pull origin main` (nie szukaj gałęzi `hefas-stm` — jej tu nie ma).
 
-Szczegóły: [docs/REPO_I_FOLDER.md](docs/REPO_I_FOLDER.md) · upload Nicla: [docs/UPLOAD_NICLA_WINDOWS.md](docs/UPLOAD_NICLA_WINDOWS.md)
+**Nowe repo + Pulpit od zera:** [docs/START_OD_ZERA_PULPIT.md](docs/START_OD_ZERA_PULPIT.md) · [docs/REPO_I_FOLDER.md](docs/REPO_I_FOLDER.md) · upload: [docs/UPLOAD_NICLA_WINDOWS.md](docs/UPLOAD_NICLA_WINDOWS.md)
 
 ## Moduły
 

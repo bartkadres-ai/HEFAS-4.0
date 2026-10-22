@@ -1,10 +1,12 @@
-# Jedno repo, jeden folder — bez gałęzi `hefas-stm`
+# Jedno repo, jeden folder
+
+**Pełna instrukcja od zera (nowe repo + Pulpit + Cursor):** [START_OD_ZERA_PULPIT.md](START_OD_ZERA_PULPIT.md)
 
 ## Zasada
 
-- **Cały firmware Nicla** → repo **`bartkadres-ai/Hefas-STM`**, gałąź **`main`**.
-- **HEFAS 4.0 (ESP32)** → tylko repo **`bartkadres-ai/HEFAS-4.0`** (gałąź `main`).
-- Nie pobieraj STM z gałęzi `hefas-stm` w HEFAS-4.0 — ta ścieżka była tymczasowa i jest wycofana.
+- **Cały firmware Nicla** → **jedno** repo na GitHubie, gałąź **`main`**.
+- Folder na PC: `C:\Users\werte\OneDrive\Pulpit\Hefas STM` — `origin` = to samo repo.
+- **HEFAS 4.0 (ESP32)** to osobny projekt — nie mieszaj `git remote` z Nicla.
 
 ## Pierwszy raz (Pulpit)
 
@@ -44,18 +46,6 @@ cd "C:\Users\werte\OneDrive\Pulpit"
 Rename-Item "Hefas STM" "Hefas STM stary"
 git clone https://github.com/bartkadres-ai/Hefas-STM.git "Hefas STM"
 ```
-
-## Jednorazowo: wgraj najnowszy kod na GitHub `Hefas-STM` (jeśli `main` jest stary)
-
-Na swoim PC, po pobraniu aktualnego kodu z tymczasowej gałęzi (ostatni raz):
-
-```powershell
-cd "C:\Users\werte\OneDrive\Pulpit\Hefas STM"
-git pull https://github.com/bartkadres-ai/HEFAS-4.0.git hefas-stm
-git push origin main
-```
-
-Potem tylko: `git pull origin main`.
 
 ## Codzienna praca
 
