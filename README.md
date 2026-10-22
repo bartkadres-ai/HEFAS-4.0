@@ -1,29 +1,45 @@
 # HEFAS STM
 
-**HEFAS** na **Arduino Nicla Vision** — jedna płytka (IMU + ranging + HID). Logika sterowania jak [HEFAS 4.0](https://github.com/bartkadres-ai/HEFAS-4.0); referencja ESP32 zostaje w tamtym repozytorium.
+Firmware **HEFAS** na **Arduino Nicla Vision** (IMU + ToF + HID USB/BLE + WiFi WebDebug).
 
-## Firmware
+| Repo (jedyny) | Gałąź |
+|----------------|--------|
+| **https://github.com/bartkadres-ai/Hefas-STM** | **`main`** |
 
-| Moduł | Rola |
-|--------|------|
-| `src/imu/` | Kursor z LSM6DSOX |
-| `src/tof/` | Zdarzenia „zamknięte / otwarte” z onboard ranging (histereza jak TCRT w 4.0) |
-| `src/click_logic/` | Serie impulsów, scroll, drag |
-| `src/hid/` | USB mysz |
-| `include/config.h` | Strojenie |
+Wersja na ESP32 (HEFAS 4.0) jest tylko w [HEFAS-4.0](https://github.com/bartkadres-ai/HEFAS-4.0) — **bez** osobnej gałęzi STM tam.
 
-## Mapowanie impulsów (domyślne)
+## Folder na PC (Windows)
 
-1× LPM · 2× double · 3× PPM · 4× scroll ON · 5× kalibracja · 6× debug Serial · długie trzymanie ≈ drag
+```powershell
+git clone https://github.com/bartkadres-ai/Hefas-STM.git "C:\Users\werte\OneDrive\Pulpit\Hefas STM"
+cd "C:\Users\werte\OneDrive\Pulpit\Hefas STM"
+pio run -e nicla_vision
+```
 
-## Build
+Aktualizacja: `git pull origin main` (nie szukaj gałęzi `hefas-stm` — jej tu nie ma).
+
+Szczegóły: [docs/REPO_I_FOLDER.md](docs/REPO_I_FOLDER.md) · upload Nicla: [docs/UPLOAD_NICLA_WINDOWS.md](docs/UPLOAD_NICLA_WINDOWS.md)
+
+## Moduły
+
+| Ścieżka | Rola |
+|---------|------|
+| `src/imu/` | Kursor (LSM6DSOX) |
+| `src/tof/` | Mrugnięcia / ToF |
+| `src/click_logic/` | Serie, scroll, drag |
+| `src/hid/` | USB + BLE mysz |
+| `src/web/` | WebDebug WiFi |
+| `src/ble/` | BLE HID |
+| `include/config.h` | Parametry |
+
+## Build / upload
 
 ```bash
 pio run -e nicla_vision
 pio run -e nicla_vision -t upload
 ```
 
-Rdzeń: **Arduino Mbed OS Nicla Boards**.
+Upload na Windows: **double-tap RESET**, potem upload (domyślny env bez COM8). Patrz `docs/UPLOAD_NICLA_WINDOWS.md`.
 
 ## Autorzy
 

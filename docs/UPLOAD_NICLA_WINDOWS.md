@@ -80,26 +80,28 @@ W folderze pakietu PlatformIO (ścieżka u Ciebie może być taka):
 
 ## Krok 3 — Upload w PlatformIO
 
-W katalogu projektu:
+**Ręczny DFU (domyślne, bez COM):**
 
 ```bash
 pio run -e nicla_vision -t upload
 ```
 
-W `platformio.ini` powinno być (już dodane w repo):
+(najpierw **double-tap RESET**)
+
+**Auto-reset przez COM** (płytka w trybie programu, COM wolny):
+
+```bash
+pio run -e nicla_vision_auto -t upload
+```
+
+W `platformio.ini`:
 
 ```ini
 upload_protocol = dfu
+board_upload.use_1200bps_touch = no   ; domyślne env nicla_vision
 ```
 
-Opcjonalnie, gdy masz kilka urządzeń USB:
-
-```bash
-pio device list
-pio run -e nicla_vision -t upload --upload-port COM7
-```
-
-(`COM7` zamień na port z listy — w DFU czasem nie ma COM, wtedy upload i tak idzie po DFU 2341:035f).
+Nie ustawiaj `--upload-port COM8` przy ręcznym DFU — upload idzie po **2341:035f**, nie po COM.
 
 ---
 
